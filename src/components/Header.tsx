@@ -162,24 +162,14 @@ export default function Header() {
               {showFavoriteCollectionTitle ? (
                 <>
                   <span className="min-w-0 truncate text-[17px] font-bold tracking-tight text-gray-800 dark:text-gray-100 sm:hidden" title={favoriteCollectionTitle}>{favoriteCollectionTitle}</span>
-                  <a
-                    href="https://github.com/CookSleep/gpt_image_playground"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="hidden text-lg font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:inline"
-                  >
-                    GPT Image Playground
-                  </a>
+                  <span className="hidden text-lg font-bold tracking-tight text-gray-800 dark:text-gray-100 sm:inline">
+                    VIAPI Image
+                  </span>
                 </>
               ) : (
-                <a
-                  href="https://github.com/CookSleep/gpt_image_playground"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[17px] sm:text-lg font-bold tracking-tight text-gray-800 dark:text-gray-100 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                >
-                  GPT Image Playground
-                </a>
+                <span className="text-[17px] font-bold tracking-tight text-gray-800 dark:text-gray-100 sm:text-lg">
+                  VIAPI Image
+                </span>
               )}
               {/* 透明伪元素把点击区域扩大到 32px 以上，外观不变 */}
               {hasUpdate && latestRelease && (

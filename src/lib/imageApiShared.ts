@@ -41,6 +41,39 @@ export interface CallApiResult {
   failedRequests?: Array<{ requestIndex: number; error: string }>
 }
 
+export function mergeConcurrentApiResults(results: PromiseSettledResult<CallApiResult>[]): CallApiResult {
+  const successfulResults = results
+    .filter((result): result is PromiseFulfilledResult<CallApiResult> => result.status === 'fulfilled')
+    .map((result) => result.value)
+  if (!successfulResults.length) {
+    const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')!
+    throw firstError.reason
+  }
+
+  const images = successfulResults.flatMap((result) => result.images)
+  const actualParamsList = successfulResults.flatMap((result) =>
+    result.actualParamsList?.length ? result.actualParamsList : result.images.map(() => result.actualParams),
+  )
+  const revisedPrompts = successfulResults.flatMap((result) =>
+    result.revisedPrompts?.length ? result.revisedPrompts : result.images.map(() => undefined),
+  )
+  const rawImageUrls = successfulResults.flatMap((result) => result.rawImageUrls ?? [])
+  const failedRequests = results.flatMap((result, requestIndex) =>
+    result.status === 'rejected'
+      ? [{ requestIndex, error: result.reason instanceof Error ? result.reason.message : String(result.reason) }]
+      : [],
+  )
+
+  return {
+    images,
+    actualParams: mergeActualParams(successfulResults[0].actualParams ?? {}, { n: images.length }),
+    actualParamsList,
+    revisedPrompts,
+    ...(rawImageUrls.length ? { rawImageUrls } : {}),
+    ...(failedRequests.length ? { failedRequests } : {}),
+  }
+}
+
 export function isHttpUrl(value: unknown): value is string {
   return typeof value === 'string' && /^https?:\/\//i.test(value)
 }

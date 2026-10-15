@@ -36,6 +36,16 @@ export function normalizeParamsForSettings(
     nextParams.output_compression = DEFAULT_PARAMS.output_compression
   }
 
+  if (activeProfile.provider === 'gemini') {
+    nextParams.quality = DEFAULT_PARAMS.quality
+    nextParams.moderation = DEFAULT_PARAMS.moderation
+  }
+
+  if (activeProfile.provider === 'grok') {
+    if (nextParams.quality !== 'auto' && nextParams.quality !== 'low' && nextParams.quality !== 'medium') nextParams.quality = 'medium'
+    nextParams.moderation = DEFAULT_PARAMS.moderation
+  }
+
   if ((nextParams.quality === 'xhigh' || nextParams.quality === 'max') && !isGptImage25Model(getImageGenerationModel(activeProfile))) {
     nextParams.quality = 'high'
   }

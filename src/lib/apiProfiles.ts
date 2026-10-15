@@ -39,10 +39,28 @@ export { DEFAULT_IMAGES_MODEL } from './imageModels'
 export const DEFAULT_RESPONSES_MODEL = 'gpt-6.1-sol'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
+const GEMINI_OFFICIAL_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
+const GROK_OFFICIAL_BASE_URL = 'https://api.x.ai/v1'
+
+function getDefaultBaseUrl(officialBaseUrl: string) {
+  if (!RAW_DEFAULT_API_URL || isImportableConfigUrl(RAW_DEFAULT_API_URL)) return officialBaseUrl
+  try {
+    const parsed = new URL(RAW_DEFAULT_API_URL)
+    const baseUrl = parsed.searchParams.get('apiUrl') ?? RAW_DEFAULT_API_URL.split(/[?#]/)[0]
+    return baseUrl.trim().replace(/\/+$/, '') || officialBaseUrl
+  } catch {
+    return RAW_DEFAULT_API_URL.split(/[?#]/)[0].replace(/\/+$/, '') || officialBaseUrl
+  }
+}
+
+export const DEFAULT_GEMINI_BASE_URL = getDefaultBaseUrl(GEMINI_OFFICIAL_BASE_URL)
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-image'
+export const DEFAULT_GROK_BASE_URL = getDefaultBaseUrl(GROK_OFFICIAL_BASE_URL)
+export const DEFAULT_GROK_MODEL = 'grok-imagine-image-2.0'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
 export const DEFAULT_API_TIMEOUT = 600
 
-const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'sb2api-async', 'fal'])
+const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'gemini', 'grok', 'sb2api-async', 'fal'])
 const DEFAULT_CUSTOM_PROVIDER_PATHS = {
   generationPath: 'images/generations',
   editPath: 'images/edits',
@@ -148,7 +166,7 @@ function normalizeZipDownloadRoutes(value: unknown) {
 function normalizeProviderOrder(value: unknown, customProviders: CustomProviderDefinition[]): string[] | undefined {
   if (!Array.isArray(value)) return undefined
 
-  const providerIds = ['openai', 'sb2api-async', 'fal', ...customProviders.map((provider) => provider.id)]
+  const providerIds = ['openai', 'gemini', 'grok', 'sb2api-async', 'fal', ...customProviders.map((provider) => provider.id)]
   const knownIds = new Set(providerIds)
   const ordered = value
     .map(String)
@@ -413,6 +431,46 @@ export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): Ap
   }
 }
 
+export function createDefaultGeminiProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
+  return {
+    id: `gemini-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    name: '新配置',
+    provider: 'gemini',
+    baseUrl: DEFAULT_GEMINI_BASE_URL,
+    apiKey: '',
+    model: DEFAULT_GEMINI_MODEL,
+    imageGenerationModel: DEFAULT_IMAGES_MODEL,
+    timeout: DEFAULT_API_TIMEOUT,
+    apiMode: 'images',
+    codexCli: false,
+    apiProxy: false,
+    streamImages: false,
+    streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    transparentBackgroundMethod: 'local',
+    ...overrides,
+  }
+}
+
+export function createDefaultGrokProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
+  return {
+    id: `grok-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    name: '新配置',
+    provider: 'grok',
+    baseUrl: DEFAULT_GROK_BASE_URL,
+    apiKey: '',
+    model: DEFAULT_GROK_MODEL,
+    imageGenerationModel: DEFAULT_IMAGES_MODEL,
+    timeout: DEFAULT_API_TIMEOUT,
+    apiMode: 'images',
+    codexCli: false,
+    apiProxy: false,
+    streamImages: false,
+    streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    transparentBackgroundMethod: 'local',
+    ...overrides,
+  }
+}
+
 export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvider, customProvider?: CustomProviderDefinition): ApiProfile {
   const providerDrafts = {
     ...profile.providerDrafts,
@@ -451,8 +509,46 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
     }
   }
 
+  if (provider === 'gemini') {
+    return {
+      ...profile,
+      provider,
+      baseUrl: savedDraft?.baseUrl ?? DEFAULT_GEMINI_BASE_URL,
+      model: savedDraft?.model ?? DEFAULT_GEMINI_MODEL,
+      imageGenerationModel: savedDraft?.imageGenerationModel ?? profile.imageGenerationModel,
+      apiMode: 'images',
+      reasoningEffort: savedDraft?.reasoningEffort,
+      codexCli: false,
+      apiProxy: false,
+      responseFormatB64Json: savedDraft?.responseFormatB64Json,
+      streamImages: false,
+      streamPartialImages: savedDraft?.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES,
+      transparentBackgroundMethod: 'local',
+      providerDrafts,
+    }
+  }
+
+  if (provider === 'grok') {
+    return {
+      ...profile,
+      provider,
+      baseUrl: savedDraft?.baseUrl ?? DEFAULT_GROK_BASE_URL,
+      model: savedDraft?.model ?? DEFAULT_GROK_MODEL,
+      imageGenerationModel: savedDraft?.imageGenerationModel ?? profile.imageGenerationModel,
+      apiMode: 'images',
+      reasoningEffort: savedDraft?.reasoningEffort,
+      codexCli: false,
+      apiProxy: false,
+      responseFormatB64Json: savedDraft?.responseFormatB64Json,
+      streamImages: false,
+      streamPartialImages: savedDraft?.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES,
+      transparentBackgroundMethod: 'local',
+      providerDrafts,
+    }
+  }
+
   if (customProvider) {
-    const shouldUseOpenAIDefaults = profile.provider === 'fal'
+    const shouldUseOpenAIDefaults = profile.provider === 'fal' || profile.provider === 'gemini' || profile.provider === 'grok'
     const supportsNativeTransparentBackground = customProviderSupportsNativeTransparentBackground(customProvider)
     return {
       ...profile,
@@ -505,11 +601,15 @@ function normalizeProviderDraft(
   nativeTransparentProviderIds: Set<string>,
 ): ApiProfileProviderDraft {
   if (!isRecord(input)) return undefined
-  const nativeTransparentBackgroundUnavailable = customProviderIds.has(provider) && !nativeTransparentProviderIds.has(provider)
+  const nativeTransparentBackgroundUnavailable = provider === 'gemini' || provider === 'grok' || (customProviderIds.has(provider) && !nativeTransparentProviderIds.has(provider))
   const transparentBackgroundMethod = nativeTransparentBackgroundUnavailable ? 'local' : 'api'
   const fallback = provider === 'fal'
     ? createDefaultFalProfile()
-    : createDefaultOpenAIProfile({ transparentBackgroundMethod })
+    : provider === 'gemini'
+      ? createDefaultGeminiProfile()
+      : provider === 'grok'
+        ? createDefaultGrokProfile()
+        : createDefaultOpenAIProfile({ transparentBackgroundMethod })
   const baseUrl = typeof input.baseUrl === 'string' ? input.baseUrl : undefined
   const model = (typeof input.model === 'string' && normalizeModelList(input.model)) || undefined
   const imageGenerationModel = typeof input.imageGenerationModel === 'string' ? input.imageGenerationModel.trim() : ''
@@ -520,7 +620,11 @@ function normalizeProviderDraft(
   return {
     baseUrl: provider === 'fal'
       ? baseUrl?.trim().replace(/\/+$/, '') || DEFAULT_FAL_BASE_URL
-      : baseUrl,
+      : provider === 'gemini'
+        ? baseUrl?.trim().replace(/\/+$/, '') || DEFAULT_GEMINI_BASE_URL
+        : provider === 'grok'
+          ? baseUrl?.trim().replace(/\/+$/, '') || DEFAULT_GROK_BASE_URL
+          : baseUrl,
     model,
     imageGenerationModel,
     apiMode,
@@ -559,17 +663,21 @@ export function normalizeApiProfile(
   const rawProvider = typeof record.provider === 'string' ? record.provider : ''
   const provider: ApiProvider = BUILT_IN_PROVIDER_IDS.has(rawProvider) || customProviderIds.has(rawProvider) ? rawProvider : 'openai'
   const apiMode: ApiMode = provider === 'openai' && record.apiMode === 'responses' ? 'responses' : 'images'
-  const providerFallback = customProviderIds.has(provider)
+  const providerFallback = provider === 'gemini' || provider === 'grok' || customProviderIds.has(provider)
     ? { transparentBackgroundMethod: 'local' as const, ...fallback }
     : fallback
   const defaults = provider === 'fal'
     ? createDefaultFalProfile(providerFallback)
-    : createDefaultOpenAIProfile({ ...providerFallback, apiMode })
+    : provider === 'gemini'
+      ? createDefaultGeminiProfile(providerFallback)
+      : provider === 'grok'
+        ? createDefaultGrokProfile(providerFallback)
+        : createDefaultOpenAIProfile({ ...providerFallback, apiMode })
   const rawBaseUrl = typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
   const streamImages = provider === 'openai'
     ? typeof record.streamImages === 'boolean' ? record.streamImages : defaults.streamImages
     : false
-  const nativeTransparentBackgroundUnavailable = customProviderIds.has(provider) && !nativeTransparentProviderIds.has(provider)
+  const nativeTransparentBackgroundUnavailable = provider === 'gemini' || provider === 'grok' || (customProviderIds.has(provider) && !nativeTransparentProviderIds.has(provider))
 
   return {
     ...defaults,
@@ -578,7 +686,13 @@ export function normalizeApiProfile(
     name: typeof record.name === 'string' && record.name.trim() ? record.name : defaults.name,
     description: typeof record.description === 'string' && record.description.trim() ? record.description : undefined,
     provider,
-    baseUrl: provider === 'fal' ? rawBaseUrl.trim().replace(/\/+$/, '') : rawBaseUrl,
+    baseUrl: provider === 'fal'
+      ? rawBaseUrl.trim().replace(/\/+$/, '')
+      : provider === 'gemini'
+        ? rawBaseUrl.trim().replace(/\/+$/, '') || DEFAULT_GEMINI_BASE_URL
+        : provider === 'grok'
+          ? rawBaseUrl.trim().replace(/\/+$/, '') || DEFAULT_GROK_BASE_URL
+          : rawBaseUrl,
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : defaults.apiKey,
     model: (typeof record.model === 'string' && normalizeModelList(record.model)) || defaults.model,
     selectedModel: typeof record.selectedModel === 'string' && record.selectedModel.trim() ? record.selectedModel.trim() : undefined,
@@ -588,8 +702,8 @@ export function normalizeApiProfile(
     timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : defaults.timeout,
     apiMode,
     reasoningEffort: normalizeReasoningEffort(record.reasoningEffort, defaults.reasoningEffort),
-    codexCli: Boolean(record.codexCli),
-    apiProxy: provider === 'sb2api-async' ? false : typeof record.apiProxy === 'boolean' ? record.apiProxy : defaults.apiProxy,
+    codexCli: provider === 'gemini' || provider === 'grok' ? false : Boolean(record.codexCli),
+    apiProxy: provider === 'sb2api-async' || provider === 'gemini' || provider === 'grok' ? false : typeof record.apiProxy === 'boolean' ? record.apiProxy : defaults.apiProxy,
     responseFormatB64Json: record.responseFormatB64Json === true ? true : undefined,
     streamImages,
     streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, defaults.streamPartialImages),
@@ -788,6 +902,8 @@ export function getCustomProviderDefinition(settings: Partial<AppSettings> | unk
 
 export function getApiProviderLabel(settings: Partial<AppSettings> | unknown, provider: ApiProvider): string {
   if (provider === 'fal') return 'fal.ai'
+  if (provider === 'gemini') return 'Gemini'
+  if (provider === 'grok') return 'Grok'
   if (provider === 'openai') return 'OpenAI'
   if (provider === 'sb2api-async') return SUB2API_PROVIDER.name
   return getCustomProviderDefinition(settings, provider)?.name ?? provider

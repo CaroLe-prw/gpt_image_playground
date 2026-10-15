@@ -17,6 +17,7 @@ import {
   isDataUrl,
   isHttpUrl,
   mergeActualParams,
+  mergeConcurrentApiResults,
   maybeAppendTransparentBackgroundHint,
   maybeAppendImageToolDroppedHint,
   MIME_MAP,
@@ -102,10 +103,6 @@ function isRecordValue(value: unknown): value is Record<string, unknown> {
 function getStringValue(source: Record<string, unknown>, key: string): string | undefined {
   const value = source[key]
   return typeof value === 'string' && value.trim() ? value : undefined
-}
-
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
 }
 
 function getNumberValue(source: Record<string, unknown>, key: string): number | undefined {
@@ -950,37 +947,6 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
     return pollCustomTaskResult(profile, customProvider.poll, taskId, mime, controller.signal)
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
-  }
-}
-
-function mergeConcurrentApiResults(results: PromiseSettledResult<CallApiResult>[]): CallApiResult {
-  const successfulResults = results
-    .filter((result): result is PromiseFulfilledResult<CallApiResult> => result.status === 'fulfilled')
-    .map((result) => result.value)
-  if (!successfulResults.length) {
-    const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')!
-    throw firstError.reason
-  }
-
-  const images = successfulResults.flatMap((result) => result.images)
-  const actualParamsList = successfulResults.flatMap((result) =>
-    result.actualParamsList?.length ? result.actualParamsList : result.images.map(() => result.actualParams),
-  )
-  const revisedPrompts = successfulResults.flatMap((result) =>
-    result.revisedPrompts?.length ? result.revisedPrompts : result.images.map(() => undefined),
-  )
-  const rawImageUrls = successfulResults.flatMap((result) => result.rawImageUrls ?? [])
-  const failedRequests = results.flatMap((result, requestIndex) =>
-    result.status === 'rejected' ? [{ requestIndex, error: getErrorMessage(result.reason) }] : [],
-  )
-
-  return {
-    images,
-    actualParams: mergeActualParams(successfulResults[0].actualParams ?? {}, { n: images.length }),
-    actualParamsList,
-    revisedPrompts,
-    ...(rawImageUrls.length ? { rawImageUrls } : {}),
-    ...(failedRequests.length ? { failedRequests } : {}),
   }
 }
 

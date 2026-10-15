@@ -2,12 +2,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_FAL_BASE_URL,
   DEFAULT_FAL_MODEL,
+  DEFAULT_GEMINI_BASE_URL,
+  DEFAULT_GEMINI_MODEL,
+  DEFAULT_GROK_BASE_URL,
+  DEFAULT_GROK_MODEL,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_RESPONSES_MODEL,
   DEFAULT_OPENAI_PROFILE_ID,
   DEFAULT_SETTINGS,
   createDefaultOpenAIProfile,
   createDefaultFalProfile,
+  createDefaultGeminiProfile,
+  createDefaultGrokProfile,
   getApiProviderLabel,
   getActiveApiProfile,
   getCustomProviderDefinition,
@@ -78,6 +84,18 @@ describe('normalizeApiProfile', () => {
     expect(normalizeApiProfile({ provider: 'fal', transparentBackgroundMethod: 'api' }).transparentBackgroundMethod).toBe('api')
     expect(normalizeApiProfile({ provider: 'fal', transparentBackgroundMethod: 'invalid' }).transparentBackgroundMethod).toBe('api')
   })
+
+  it('uses Gemini defaults and forces local transparent background processing', () => {
+    expect(normalizeApiProfile({ provider: 'gemini' })).toMatchObject({
+      provider: 'gemini',
+      baseUrl: DEFAULT_GEMINI_BASE_URL,
+      model: DEFAULT_GEMINI_MODEL,
+      apiMode: 'images',
+      transparentBackgroundMethod: 'local',
+    })
+    expect(normalizeApiProfile({ provider: 'gemini', transparentBackgroundMethod: 'api' }).transparentBackgroundMethod).toBe('local')
+    expect(getApiProviderLabel(DEFAULT_SETTINGS, 'gemini')).toBe('Gemini')
+  })
 })
 
 describe('normalizeSettings', () => {
@@ -143,6 +161,18 @@ describe('default API URL env', () => {
     expect(apiProfiles.DEFAULT_SETTINGS.profiles[0].imageGenerationModel).toBe(imageGenerationModel ?? DEFAULT_IMAGES_MODEL)
     expect(apiProfiles.normalizeApiProfile({ apiMode: 'responses' }).imageGenerationModel).toBe('')
     expect(apiProfiles.normalizeSettings({ apiMode: 'responses' }).profiles[0].imageGenerationModel).toBe('')
+  })
+
+  it('uses the env Gemini base URL when present and falls back to the official URL when empty', async () => {
+    vi.resetModules()
+    vi.stubEnv('VITE_DEFAULT_API_URL', 'https://api.viapi.cc/v1beta/')
+    let apiProfiles = await import('./apiProfiles')
+    expect(apiProfiles.createDefaultGeminiProfile().baseUrl).toBe('https://api.viapi.cc/v1beta')
+
+    vi.resetModules()
+    vi.stubEnv('VITE_DEFAULT_API_URL', '')
+    apiProfiles = await import('./apiProfiles')
+    expect(apiProfiles.createDefaultGeminiProfile().baseUrl).toBe('https://generativelanguage.googleapis.com/v1beta')
   })
 
   it('applies shared URL params from VITE_DEFAULT_API_URL to the default profile', async () => {
@@ -1544,6 +1574,19 @@ describe('custom providers', () => {
     expect(profile.transparentBackgroundMethod).toBe('api')
   })
 
+  it('does not inherit Gemini URL and model when switching to a custom provider', () => {
+    const provider = importCustomProviderDefinitionFromJson(JSON.stringify({
+      name: 'Custom Provider',
+      submit: { path: 'images/generations' },
+    }))
+    const profile = switchApiProfileProvider(createDefaultGeminiProfile(), provider.id, provider)
+
+    expect(profile.provider).toBe(provider.id)
+    expect(profile.baseUrl).toBe(DEFAULT_SETTINGS.baseUrl)
+    expect(profile.model).toBe(DEFAULT_IMAGES_MODEL)
+    expect(profile.transparentBackgroundMethod).toBe('api')
+  })
+
   it('rejects task mappings without poll configuration', () => {
     expect(() => importCustomProviderDefinitionFromJson(JSON.stringify({
       name: 'Invalid Async',
@@ -1641,7 +1684,7 @@ describe('custom providers', () => {
       ],
     })
 
-    expect(settings.providerOrder).toEqual(['fal', 'openai', 'sb2api-async', 'custom-alpha', 'custom-beta'])
+    expect(settings.providerOrder).toEqual(['fal', 'openai', 'gemini', 'grok', 'sb2api-async', 'custom-alpha', 'custom-beta'])
   })
 
   it('keeps active custom providers in Images API mode when legacy apiMode is responses', () => {
@@ -1669,10 +1712,55 @@ describe('custom providers', () => {
     const openaiProfile = createDefaultOpenAIProfile({ apiMode: 'responses', streamImages: true })
 
     const falProfile = switchApiProfileProvider(openaiProfile, 'fal')
+    const geminiProfile = switchApiProfileProvider(openaiProfile, 'gemini')
+    const grokProfile = switchApiProfileProvider(openaiProfile, 'grok')
     const customProfile = switchApiProfileProvider(openaiProfile, provider.id, provider)
 
     expect(falProfile).toMatchObject({ provider: 'fal', apiMode: 'images', streamImages: false, transparentBackgroundMethod: 'api' })
+    expect(geminiProfile).toMatchObject({
+      provider: 'gemini',
+      baseUrl: DEFAULT_GEMINI_BASE_URL,
+      model: DEFAULT_GEMINI_MODEL,
+      apiMode: 'images',
+      streamImages: false,
+      transparentBackgroundMethod: 'local',
+    })
+    expect(grokProfile).toMatchObject({
+      provider: 'grok',
+      baseUrl: DEFAULT_GROK_BASE_URL,
+      model: DEFAULT_GROK_MODEL,
+      apiMode: 'images',
+      streamImages: false,
+      transparentBackgroundMethod: 'local',
+    })
     expect(customProfile).toMatchObject({ provider: provider.id, apiMode: 'images', streamImages: false })
+  })
+
+  it('normalizes Grok profiles with native defaults', () => {
+    const settings = normalizeSettings({
+      profiles: [createDefaultGrokProfile({
+        id: 'grok-test',
+        baseUrl: '',
+        model: '',
+        apiMode: 'responses',
+        streamImages: true,
+        codexCli: true,
+        apiProxy: true,
+        transparentBackgroundMethod: 'api',
+      })],
+    })
+
+    expect(settings.profiles[0]).toMatchObject({
+      provider: 'grok',
+      baseUrl: DEFAULT_GROK_BASE_URL,
+      model: DEFAULT_GROK_MODEL,
+      apiMode: 'images',
+      streamImages: false,
+      codexCli: false,
+      apiProxy: false,
+      transparentBackgroundMethod: 'local',
+    })
+    expect(getApiProviderLabel(settings, 'grok')).toBe('Grok')
   })
 
   it('keeps an explicitly empty fal.ai URL', () => {

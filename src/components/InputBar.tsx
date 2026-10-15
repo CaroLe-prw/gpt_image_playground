@@ -509,22 +509,29 @@ export default function InputBar() {
   }, [setPrompt])
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
+  const isGeminiProvider = activeProvider === 'gemini'
+  const isGrokProvider = activeProvider === 'grok'
   const agentAutoImageCount = appMode === 'agent'
-  const moderationDisabled = isFalProvider
+  const moderationDisabled = isFalProvider || isGeminiProvider || isGrokProvider
   const transparentOutputAvailable = appMode === 'gallery'
   const showTransparentOutputControl = transparentOutputAvailable && (params.output_format === 'png' || params.output_format === 'webp')
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
   const compressionDisabled = params.output_format === 'png' || isFalProvider
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
+  const inputImageLimit = isGrokProvider ? 5 : MAX_INPUT_IMAGES
   const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
-  const streamConcurrentByN = activeProfile.provider === 'openai' && activeProfile.streamImages === true && !agentAutoImageCount && effectiveNValue > 1
+  const streamConcurrentByN = ((activeProfile.provider === 'openai' && activeProfile.streamImages === true) || isGeminiProvider) && !agentAutoImageCount && effectiveNValue > 1
   const nLimitHintText = agentAutoImageCount
     ? 'Agent 模式下数量由模型根据提示词自动决定'
     : isFalProvider
     ? `fal.ai 最大请求数量为 ${outputImageLimit}`
-    : `OpenAI 最大请求数量为 ${outputImageLimit}`
+    : isGeminiProvider
+      ? `Gemini 最多并发生成 ${outputImageLimit} 张`
+      : isGrokProvider
+        ? `Grok 最大请求数量为 ${outputImageLimit}`
+        : `OpenAI 最大请求数量为 ${outputImageLimit}`
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
     : (activeProfile.codexCli ? normalizeCodexCliImageSize(params.size) : normalizeImageSize(params.size)) || DEFAULT_PARAMS.size
@@ -533,7 +540,7 @@ export default function InputBar() {
     ...(!isFalProvider ? [{ label: 'auto', value: 'auto' }] : []),
     { label: 'low', value: 'low' },
     { label: 'medium', value: 'medium' },
-    { label: 'high', value: 'high' },
+    ...(!isGrokProvider ? [{ label: 'high', value: 'high' }] : []),
     ...(isGptImage25Model(getImageGenerationModel(activeProfile))
       ? [
           { label: 'xhigh', value: 'xhigh' },
@@ -541,16 +548,16 @@ export default function InputBar() {
         ]
       : []),
   ]
-  const atImageLimit = inputImages.length >= MAX_INPUT_IMAGES
-  const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${MAX_INPUT_IMAGES} 张），无法继续添加` : '添加图片'
+  const atImageLimit = inputImages.length >= inputImageLimit
+  const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${inputImageLimit} 张），无法继续添加` : '添加图片'
   const transparentOutputHint = useHintTooltip()
   const handleTransparentOutputMenuOpenChange = useCallback((open: boolean) => {
     if (open) transparentOutputHint.hide()
   }, [transparentOutputHint.hide])
   const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
   const moderationHint = useHintTooltip({ enabled: () => moderationDisabled })
-  const sizeHint = useHintTooltip({ enabled: () => isFalTextToImage || activeProfile.codexCli })
-  const qualityHint = useHintTooltip({ enabled: () => activeProfile.codexCli || isFalProvider })
+  const sizeHint = useHintTooltip({ enabled: () => isFalTextToImage || activeProfile.codexCli || isGeminiProvider || isGrokProvider })
+  const qualityHint = useHintTooltip({ enabled: () => activeProfile.codexCli || isFalProvider || isGeminiProvider })
   const nLimitHint = useHintTooltip({ autoHideMs: 2000 })
   const streamConcurrentHint = useHintTooltip({ enabled: () => streamConcurrentByN })
   const maskTargetImage = maskDraft
@@ -847,15 +854,15 @@ export default function InputBar() {
   const handleFiles = async (files: FileList | File[]) => {
     try {
       const currentCount = useStore.getState().inputImages.length
-      if (currentCount >= MAX_INPUT_IMAGES) {
+      if (currentCount >= inputImageLimit) {
         useStore.getState().showToast(
-          `参考图数量已达上限（${MAX_INPUT_IMAGES} 张），无法继续添加`,
+          `参考图数量已达上限（${inputImageLimit} 张），无法继续添加`,
           'error',
         )
         return
       }
 
-      const remaining = MAX_INPUT_IMAGES - currentCount
+      const remaining = inputImageLimit - currentCount
       const accepted = Array.from(files).filter((f) => f.type.startsWith('image/'))
       const toAdd = accepted.slice(0, remaining)
       const discarded = accepted.length - toAdd.length
@@ -866,7 +873,7 @@ export default function InputBar() {
 
       if (discarded > 0) {
         useStore.getState().showToast(
-          `已达上限 ${MAX_INPUT_IMAGES} 张，${discarded} 张图片被丢弃`,
+          `已达上限 ${inputImageLimit} 张，${discarded} 张图片被丢弃`,
           'error',
         )
       }
@@ -1676,6 +1683,8 @@ export default function InputBar() {
       modelOptions={modelOptions}
       onModelChange={handleModelChange}
       isFalProvider={isFalProvider}
+      isGeminiProvider={isGeminiProvider}
+      isGrokProvider={isGrokProvider}
       isFalTextToImage={isFalTextToImage}
       displaySize={displaySize}
       qualityOptions={qualityOptions}
@@ -1727,7 +1736,7 @@ export default function InputBar() {
 
   return (
     <>
-      <DragUploadOverlay visible={isDragging} atImageLimit={atImageLimit} maxImages={MAX_INPUT_IMAGES} />
+      <DragUploadOverlay visible={isDragging} atImageLimit={atImageLimit} maxImages={inputImageLimit} />
 
       {showSizePicker && (
         <SizePickerModal

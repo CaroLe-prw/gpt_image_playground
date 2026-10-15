@@ -1,0 +1,26 @@
+{
+  "profiles": [
+    {
+      "id": "openai-main",
+      "name": "OpenAI",
+      "provider": "openai",
+      "baseUrl": "https://api.viapi.cc",
+      "model": "gpt-image-2.5-sunburst",
+      "isDefault": true
+    },
+    {
+      "id": "gemini-main",
+      "name": "Gemini",
+      "provider": "gemini",
+      "baseUrl": "https://api.viapi.cc",
+      "model": "gemini-3.1-flash-image"
+    },
+    {
+      "id": "grok-main",
+      "name": "Grok",
+      "provider": "grok",
+      "baseUrl": "https://api.viapi.cc",
+      "model": "grok-imagine-image-2.0"
+    }
+  ]
+}

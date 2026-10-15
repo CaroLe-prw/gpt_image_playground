@@ -11,6 +11,10 @@ import {
   createDefaultOpenAIProfile,
   DEFAULT_FAL_BASE_URL,
   DEFAULT_FAL_MODEL,
+  DEFAULT_GEMINI_BASE_URL,
+  DEFAULT_GEMINI_MODEL,
+  DEFAULT_GROK_BASE_URL,
+  DEFAULT_GROK_MODEL,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_RESPONSES_MODEL,
   DEFAULT_SETTINGS,
@@ -25,8 +29,10 @@ import {
   mergeImportedSettings,
   normalizeAgentMaxToolRounds,
   normalizeCustomProviderDefinition,
+  normalizeModelList,
   normalizeSettings,
   normalizeStreamPartialImages,
+  splitModelList,
   switchApiProfileProvider,
 } from '../lib/apiProfiles'
 import {
@@ -45,6 +51,7 @@ import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboar
 import { createCustomProfileImportUrl } from '../lib/profileImportUrl'
 import { getProfileImportBaseUrl, handledImportLinks } from '../lib/importLink'
 import { requestBrowserNotificationPermission, type BrowserNotificationPermissionResult } from '../lib/browserNotification'
+import { fetchProfileModels } from '../lib/modelCatalog'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, REASONING_EFFORT_VALUES, type AgentApiConfigMode, type ApiProfile, type AppSettings, type CustomProviderDefinition, type ReasoningEffort, type ZipDownloadRoute } from '../types'
 import {
   CUSTOM_PROVIDER_LLM_PROMPT,
@@ -57,16 +64,14 @@ import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdo
 import Select from './Select'
 import { Checkbox } from './Checkbox'
 import ViewportTooltip from './ViewportTooltip'
-import { ChevronDownIcon, CloseIcon, CopyIcon, PlusIcon, TrashIcon, ExportIcon, ImportIcon, DragHandleIcon, LinkIcon } from './icons'
+import { ChevronDownIcon, CloseIcon, CopyIcon, PlusIcon, TrashIcon, ExportIcon, ImportIcon, DragHandleIcon, LinkIcon, RefreshIcon } from './icons'
 import { TooltipButton } from './TooltipButton'
 import GeneralSettingsTab from './settings/GeneralSettingsTab'
 import AgentSettingsTab from './settings/AgentSettingsTab'
-import FontLicensesModal from './settings/FontLicensesModal'
 import CustomProviderModal from './settings/CustomProviderModal'
 import ProfileImportUrlModal, { type CopyImportUrlOptions } from './settings/ProfileImportUrlModal'
 import ZipDownloadRouteModal, { ZIP_DOWNLOAD_ROUTE_OPTIONS } from './settings/ZipDownloadRouteModal'
 import StorageInfoSection from './settings/StorageInfoSection'
-import AboutSettingsTab from './settings/AboutSettingsTab'
 import MarkdownRenderer from './MarkdownRenderer'
 
 function newId(prefix: string) {
@@ -178,13 +183,15 @@ export default function SettingsModal() {
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const profileMenuTriggerRef = useRef<HTMLButtonElement>(null)
   const dataTransferToastAtRef = useRef(0)
+  const modelFetchRequestRef = useRef(0)
+  const [modelFetchLoading, setModelFetchLoading] = useState(false)
+  const [modelManualInput, setModelManualInput] = useState(false)
 
   const profileImportUrlTooltipTimerRef = useRef<number | null>(null)
   const duplicateProfileTooltipTimerRef = useRef<number | null>(null)
   const settingsScrollBoundaryRef = useRef<HTMLDivElement>(null)
   const customProviderScrollBoundaryRef = useRef<HTMLDivElement>(null)
   const zipDownloadRouteScrollBoundaryRef = useRef<HTMLDivElement>(null)
-  const fontLicensesScrollBoundaryRef = useRef<HTMLDivElement>(null)
   const tabScrollRef = useRef<HTMLDivElement>(null)
   // 各选项卡共用一个滚动容器，按选项卡记录滚动位置，切换时各自恢复
   const tabScrollTopsRef = useRef<Partial<Record<SettingsTab, number>>>({})
@@ -197,7 +204,6 @@ export default function SettingsModal() {
   const [profileMenuMaxHeight, setProfileMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [showCustomProviderImport, setShowCustomProviderImport] = useState(false)
   const [showZipDownloadRouteManager, setShowZipDownloadRouteManager] = useState(false)
-  const [showFontLicenses, setShowFontLicenses] = useState(false)
   const [editingCustomProviderId, setEditingCustomProviderId] = useState<string | null>(null)
   const [customProviderJson, setCustomProviderJson] = useState(DEFAULT_CUSTOM_PROVIDER_JSON)
   const [customProviderImportError, setCustomProviderImportError] = useState<string | null>(null)
@@ -245,20 +251,22 @@ export default function SettingsModal() {
   const activePresetDescription = getPresetProfileDescription(activeProfile.id)
   const activeProfileLocked = isPresetProfileLocked(activeProfile.id)
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
-  const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
+  const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal' || activeProfile.provider === 'gemini' || activeProfile.provider === 'grok'
+  const modelFetchSupported = activeProviderIsOpenAICompatible || activeProfile.provider === 'gemini' || activeProfile.provider === 'grok'
+  const activeProviderSupportsB64 = activeProviderIsOpenAICompatible || activeProfile.provider === 'grok'
   const activeCustomProvider = getCustomProviderDefinition(draft, activeProfile.provider)
-  const activeCustomProviderSupportsNativeTransparentBackground = !activeCustomProvider || customProviderSupportsNativeTransparentBackground(activeCustomProvider)
+  const activeCustomProviderSupportsNativeTransparentBackground = activeProfile.provider !== 'gemini' && activeProfile.provider !== 'grok' && (!activeCustomProvider || customProviderSupportsNativeTransparentBackground(activeCustomProvider))
   const activeProfileApiProxyEligible = isProfileApiProxyEligible(draft, activeProfile)
   const activeCustomProviderAsync = isAsyncCustomProvider(activeCustomProvider)
   const apiProxyChecked = activeProfileApiProxyEligible && (apiProxyLocked || activeProfile.apiProxy)
   const apiProxyEnabled = apiProxyAvailable && activeProfileApiProxyEligible && apiProxyChecked
-  const defaultProviderOrder = ['openai', 'sb2api-async', 'fal', ...draft.customProviders.map(p => p.id)]
+  const defaultProviderOrder = ['openai', 'gemini', 'grok', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
   const unorderedProviderOptions = [
     { label: 'OpenAI 兼容接口', value: 'openai', draggable: true },
-    { label: 'sub2api（异步）', value: 'sb2api-async', draggable: true },
-    { label: 'fal.ai', value: 'fal', draggable: true },
+    { label: 'Gemini', value: 'gemini', draggable: true },
+    { label: 'Grok', value: 'grok', draggable: true },
     ...draft.customProviders.map((provider) => {
       const actions = [
         ...(!presetConfigOnly && !isPresetProviderLocked(provider.id) ? [{ label: '编辑', onClick: () => openEditCustomProvider(provider) }] : []),
@@ -292,6 +300,10 @@ export default function SettingsModal() {
 
   const getDefaultModelForMode = (apiMode: AppSettings['apiMode']) =>
     apiMode === 'responses' ? DEFAULT_RESPONSES_MODEL : DEFAULT_IMAGES_MODEL
+  const activeModelOptions = splitModelList(activeProfile.model)
+  const activeSelectedModel = activeProfile.selectedModel && activeModelOptions.includes(activeProfile.selectedModel)
+    ? activeProfile.selectedModel
+    : activeModelOptions[0] ?? ''
 
   const enabledZipDownloadRouteCount = ZIP_DOWNLOAD_ROUTE_OPTIONS
     .filter((option) => draft.zipDownloadRoutes.includes(option.route))
@@ -322,6 +334,12 @@ export default function SettingsModal() {
   }))
 
   const wasSettingsOpenRef = useRef(false)
+
+  useEffect(() => {
+    modelFetchRequestRef.current += 1
+    setModelFetchLoading(false)
+    setModelManualInput(false)
+  }, [activeProfile.id, activeProfile.provider])
 
   useEffect(() => {
     if (!showSettings) {
@@ -441,8 +459,18 @@ export default function SettingsModal() {
         : DEFAULT_SETTINGS.baseUrl
       const normalizedBaseUrl = profile.provider === 'fal'
         ? profile.baseUrl.trim().replace(/\/+$/, '') || (profile.id === defaultProfileId ? '' : DEFAULT_FAL_BASE_URL)
-        : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || emptyBaseUrlFallback)
-      const defaultModel = profile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(profile.apiMode)
+        : profile.provider === 'gemini'
+          ? profile.baseUrl.trim().replace(/\/+$/, '') || DEFAULT_GEMINI_BASE_URL
+          : profile.provider === 'grok'
+            ? profile.baseUrl.trim().replace(/\/+$/, '') || DEFAULT_GROK_BASE_URL
+            : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || emptyBaseUrlFallback)
+      const defaultModel = profile.provider === 'fal'
+        ? DEFAULT_FAL_MODEL
+        : profile.provider === 'gemini'
+          ? DEFAULT_GEMINI_MODEL
+          : profile.provider === 'grok'
+            ? DEFAULT_GROK_MODEL
+            : getDefaultModelForMode(profile.apiMode)
       return {
         ...profile,
         name: profile.name.trim() || (profile.id === defaultProfileId ? '默认' : '新配置'),
@@ -557,6 +585,33 @@ export default function SettingsModal() {
     if (commit) commitSettings(nextDraft)
   }
 
+  const handleFetchModels = async () => {
+    if (modelFetchLoading || activeProfileLocked) return
+    if (!activeProfile.apiKey.trim()) {
+      showToast('请先填写 API Key', 'error')
+      return
+    }
+
+    const requestId = ++modelFetchRequestRef.current
+    setModelFetchLoading(true)
+    try {
+      const models = await fetchProfileModels(draft, activeProfile)
+      if (requestId !== modelFetchRequestRef.current) return
+      const model = normalizeModelList(models.join(', '))
+      const currentSelected = activeProfile.selectedModel || splitModelList(activeProfile.model)[0]
+      const selectedModel = currentSelected && models.includes(currentSelected) ? currentSelected : models[0]
+      setModelManualInput(false)
+      updateActiveProfile({ model, selectedModel }, true)
+      showToast(`已获取 ${models.length} 个模型`, 'success')
+    } catch (err) {
+      if (requestId === modelFetchRequestRef.current) {
+        showToast(err instanceof Error ? err.message : String(err), 'error')
+      }
+    } finally {
+      if (requestId === modelFetchRequestRef.current) setModelFetchLoading(false)
+    }
+  }
+
   const commitActiveProfilePatch = (patch: Partial<ApiProfile>) => {
     if (activeProfileLocked && (Object.keys(patch).length !== 1 || patch.apiKey === undefined)) return
     const nextDraft = getDraftWithActiveProfilePatch(patch)
@@ -570,10 +625,6 @@ export default function SettingsModal() {
     }
     if (showZipDownloadRouteManager) {
       setShowZipDownloadRouteManager(false)
-      return
-    }
-    if (showFontLicenses) {
-      setShowFontLicenses(false)
       return
     }
     const nextTimeout = Number(timeoutInput)
@@ -677,9 +728,9 @@ export default function SettingsModal() {
   }
 
   useCloseOnEscape(showSettings && !dataTransferMode, handleClose)
-  // 从“关于”打开的更新弹窗叠在设置之上，需要放行它的滚动
+  // 更新弹窗叠在设置之上时，需要放行它的滚动
   const updateModalOpen = useReleaseUpdates((s) => s.modalOpen)
-  usePreventBackgroundScroll(showSettings, updateModalOpen ? updateModalScrollRef : showZipDownloadRouteManager ? zipDownloadRouteScrollBoundaryRef : showFontLicenses ? fontLicensesScrollBoundaryRef : showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
+  usePreventBackgroundScroll(showSettings, updateModalOpen ? updateModalScrollRef : showZipDownloadRouteManager ? zipDownloadRouteScrollBoundaryRef : showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
 
   if (!showSettings) return null
 
@@ -941,7 +992,7 @@ export default function SettingsModal() {
   }
 
   const handleProviderReorder = (sourceValue: string | number, targetValue: string | number, position: 'before' | 'after' | null) => {
-    const currentOrder = draft.providerOrder || ['openai', 'sb2api-async', 'fal', ...draft.customProviders.map(p => p.id)]
+    const currentOrder = draft.providerOrder || ['openai', 'gemini', 'sb2api-async', 'fal', ...draft.customProviders.map(p => p.id)]
     const sourceIndex = currentOrder.indexOf(String(sourceValue))
     const targetIndex = currentOrder.indexOf(String(targetValue))
     if (sourceIndex < 0 || targetIndex < 0) return
@@ -1218,15 +1269,6 @@ export default function SettingsModal() {
                 </svg>
                 数据管理
               </button>
-              <button
-                onClick={() => setActiveTab('about')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'about' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                关于
-              </button>
             </nav>
           </div>
 
@@ -1501,7 +1543,7 @@ export default function SettingsModal() {
                     onBlur={(e) => commitActiveProfilePatch({ baseUrl: e.target.value })}
                     type="text"
                     disabled={apiProxyEnabled || activeProfileLocked}
-                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : DEFAULT_SETTINGS.baseUrl}
+                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : activeProfile.provider === 'gemini' ? DEFAULT_GEMINI_BASE_URL : activeProfile.provider === 'grok' ? DEFAULT_GROK_BASE_URL : DEFAULT_SETTINGS.baseUrl}
                     className={`w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   />
                   <div data-selectable-text className="mt-1.5 min-h-[22px] flex items-center text-xs text-gray-500 dark:text-gray-500">
@@ -1509,6 +1551,10 @@ export default function SettingsModal() {
                       <span className="text-yellow-600 dark:text-yellow-500">已开启代理，实际请求目标由部署端决定，此处设置被忽略。</span>
                     ) : activeProfile.provider === 'fal' ? (
                       <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_FAL_BASE_URL}</code>；填写自定义地址时将作为 fal.ai 代理 URL。</span>
+                    ) : activeProfile.provider === 'gemini' ? (
+                      <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_GEMINI_BASE_URL}</code>，并拼接 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/models/...:generateContent</code> 调用 Gemini 原生接口。</span>
+                    ) : activeProfile.provider === 'grok' ? (
+                      <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_GROK_BASE_URL}</code>，并拼接 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/images/generations</code> 或 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/images/edits</code> 调用 Grok Imagine。</span>
                     ) : (
                       <span>末尾带 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/</code> 时直接使用该地址拼接接口，不补 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/v1</code> 前缀；支持通过链接参数导入（打开时会先确认）：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code>。</span>
                     )}
@@ -1550,7 +1596,7 @@ export default function SettingsModal() {
                     onChange={(e) => updateActiveProfile({ apiKey: e.target.value })}
                     onBlur={(e) => commitActiveProfilePatch({ apiKey: e.target.value })}
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : 'sk-...'}
+                    placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : activeProfile.provider === 'gemini' ? 'AIza...' : activeProfile.provider === 'grok' ? 'xai-...' : 'sk-...'}
                     className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 pr-10 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
                   />
                   <button
@@ -1603,19 +1649,55 @@ export default function SettingsModal() {
               )}
 
               {/* 7. 模型 ID（紧跟接口选择） */}
-              <label className="block">
-                <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">
-                  模型 ID
-                </span>
-                <input
-                  value={activeProfile.model}
-                  onChange={(e) => updateActiveProfile({ model: e.target.value })}
-                  onBlur={(e) => commitActiveProfilePatch({ model: e.target.value })}
-                  type="text"
-                  disabled={activeProfileLocked}
-                  placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
-                  className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
-                />
+              <div className="block">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <label htmlFor="api-model-id" className="block text-sm text-gray-600 dark:text-gray-300">模型 ID</label>
+                  <div className="flex shrink-0 items-center gap-3">
+                    {activeModelOptions.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setModelManualInput((manual) => !manual)}
+                        disabled={activeProfileLocked}
+                        className="text-xs text-gray-500 transition hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200"
+                      >
+                        {modelManualInput ? '选择模型' : '手动输入'}
+                      </button>
+                    )}
+                    {modelFetchSupported && (
+                      <button
+                        type="button"
+                        onClick={() => { void handleFetchModels() }}
+                        disabled={activeProfileLocked || modelFetchLoading || !activeProfile.apiKey.trim()}
+                        title={activeProfile.apiKey.trim() ? '从当前服务商获取可用模型' : '请先填写 API Key'}
+                        className="flex shrink-0 items-center gap-1 text-xs text-blue-600 transition hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:text-blue-300"
+                      >
+                        <RefreshIcon className={`h-3.5 w-3.5 ${modelFetchLoading ? 'animate-spin' : ''}`} />
+                        {modelFetchLoading ? '获取中…' : '获取模型'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {modelManualInput || activeModelOptions.length === 0 ? (
+                  <input
+                    id="api-model-id"
+                    value={activeProfile.model}
+                    onChange={(e) => updateActiveProfile({ model: e.target.value })}
+                    onBlur={(e) => commitActiveProfilePatch({ model: e.target.value, selectedModel: undefined })}
+                    type="text"
+                    disabled={activeProfileLocked}
+                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : activeProfile.provider === 'gemini' ? DEFAULT_GEMINI_MODEL : activeProfile.provider === 'grok' ? DEFAULT_GROK_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
+                    className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
+                  />
+                ) : (
+                  <Select
+                    value={activeSelectedModel}
+                    onChange={(value) => updateActiveProfile({ selectedModel: value }, true)}
+                    options={activeModelOptions.map((model) => ({ label: model, value: model }))}
+                    disabled={activeProfileLocked}
+                    className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
+                    menuClassName="min-w-max"
+                  />
+                )}
                   <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
                   {activeProfile.provider === 'fal' ? (
                     <>
@@ -1623,6 +1705,10 @@ export default function SettingsModal() {
                       <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2.5/sunburst</code>{' '}
                       <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2.5/flare</code>。
                     </>
+                  ) : activeProfile.provider === 'gemini' ? (
+                    <>使用支持图片输出的 Gemini 模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_GEMINI_MODEL}</code> 或 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">gemini-3-pro-image</code>。</>
+                  ) : activeProfile.provider === 'grok' ? (
+                    <>使用 Grok Imagine 生图模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_GROK_MODEL}</code>。</>
                   ) : activeCustomProvider ? (
                     <>当前使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{activeCustomProvider.name}</code>。</>
                   ) : (activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' ? (
@@ -1635,7 +1721,7 @@ export default function SettingsModal() {
                     <>支持通过链接参数导入：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?model=</code>。</>
                   )}
                 </div>
-              </label>
+              </div>
 
               {activeProfile.provider === 'openai' && activeProfile.apiMode === 'responses' && (
                 <label className="block">
@@ -1745,14 +1831,18 @@ export default function SettingsModal() {
                   </div>
                 </div>
                 <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                  {activeCustomProviderSupportsNativeTransparentBackground
-                    ? `API 原生会请求接口直接生成透明背景，需当前接口支持；本地后处理会生成纯色背景并在${isTauri ? '本地' : '浏览器中'}去除。`
-                    : <>当前自定义服务商 Manifest 未映射 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">$params.background</code>，无法使用 API 原生透明背景。</>}
+                  {activeProfile.provider === 'gemini'
+                    ? 'Gemini 原生接口没有独立透明背景参数，将使用本地后处理。'
+                    : activeProfile.provider === 'grok'
+                      ? 'Grok Imagine 没有独立透明背景参数，将使用本地后处理。'
+                      : activeCustomProviderSupportsNativeTransparentBackground
+                        ? `API 原生会请求接口直接生成透明背景，需当前接口支持；本地后处理会生成纯色背景并在${isTauri ? '本地' : '浏览器中'}去除。`
+                        : <>当前自定义服务商 Manifest 未映射 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">$params.background</code>，无法使用 API 原生透明背景。</>}
                 </div>
               </div>
 
               {/* 10. 返回 Base64 图片数据 */}
-              {activeProviderIsOpenAICompatible && (
+              {activeProviderSupportsB64 && (
                 <div className="block">
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="block text-sm text-gray-600 dark:text-gray-300">返回 Base64 图片数据</span>
@@ -1948,8 +2038,6 @@ export default function SettingsModal() {
                 </div>
               </div>
             )}
-
-            {activeTab === 'about' && <AboutSettingsTab onOpenFontLicenses={() => setShowFontLicenses(true)} />}
           </div>
         </div>
       </div>
@@ -1961,13 +2049,6 @@ export default function SettingsModal() {
             scrollBoundaryRef={zipDownloadRouteScrollBoundaryRef}
             onSetEnabled={setZipDownloadRouteEnabled}
             onClose={() => setShowZipDownloadRouteManager(false)}
-          />
-        )}
-
-        {showFontLicenses && (
-          <FontLicensesModal
-            scrollBoundaryRef={fontLicensesScrollBoundaryRef}
-            onClose={() => setShowFontLicenses(false)}
           />
         )}
 

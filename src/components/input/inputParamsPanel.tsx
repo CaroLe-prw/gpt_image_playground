@@ -100,6 +100,8 @@ export default function InputParamsPanel({
   modelOptions,
   onModelChange,
   isFalProvider,
+  isGeminiProvider,
+  isGrokProvider,
   isFalTextToImage,
   displaySize,
   qualityOptions,
@@ -150,6 +152,8 @@ export default function InputParamsPanel({
   modelOptions: Array<{ label: string; value: string }>
   onModelChange: (model: string) => void
   isFalProvider: boolean
+  isGeminiProvider: boolean
+  isGrokProvider: boolean
   isFalTextToImage: boolean
   displaySize: string
   qualityOptions: Array<{ label: string; value: string }>
@@ -239,10 +243,14 @@ export default function InputParamsPanel({
           <span className="font-mono">{displaySize}</span>
         </button>
         <ButtonTooltip
-          visible={(isFalTextToImage || activeProfile.codexCli) && sizeHint.visible}
+          visible={(isFalTextToImage || activeProfile.codexCli || isGeminiProvider || isGrokProvider) && sizeHint.visible}
           text={isFalTextToImage
             ? <>fal.ai 的文生图模式不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 参数</>
-            : 'Codex CLI 不支持尺寸参数，此处设置仅基于提示词工程'}
+            : isGeminiProvider
+              ? 'Gemini 会映射为支持的宽高比；支持的模型还会映射 1K、2K 或 4K 分辨率档位'
+              : isGrokProvider
+                ? 'Grok 会映射为支持的宽高比和 1K、2K 分辨率档位'
+                : 'Codex CLI 不支持尺寸参数，此处设置仅基于提示词工程'}
         />
       </div>
       <div
@@ -255,19 +263,23 @@ export default function InputParamsPanel({
         onClick={qualityHint.show}
       >
         <Select
-          value={activeProfile.codexCli ? 'auto' : isFalProvider && params.quality === 'auto' ? 'high' : params.quality}
+          value={activeProfile.codexCli || isGeminiProvider ? 'auto' : isFalProvider && params.quality === 'auto' ? 'high' : params.quality}
           onChange={(val) => {
-            if (!activeProfile.codexCli) setParams({ quality: val as TaskParams['quality'] })
+            if (!activeProfile.codexCli && !isGeminiProvider) setParams({ quality: val as TaskParams['quality'] })
           }}
           options={qualityOptions}
-          disabled={activeProfile.codexCli}
+          disabled={activeProfile.codexCli || isGeminiProvider}
           prefix={prefix('质量')}
           menuClassName="min-w-max"
-          className={activeProfile.codexCli ? CHIP_DISABLED_CLASS : CHIP_CLASS}
+          className={activeProfile.codexCli || isGeminiProvider ? CHIP_DISABLED_CLASS : CHIP_CLASS}
         />
         <ButtonTooltip
-          visible={(activeProfile.codexCli || isFalProvider) && qualityHint.visible}
-          text={isFalProvider ? <>fal.ai 不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 质量参数</> : 'Codex CLI 不支持质量参数'}
+          visible={(activeProfile.codexCli || isFalProvider || isGeminiProvider) && qualityHint.visible}
+          text={isFalProvider
+            ? <>fal.ai 不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 质量参数</>
+            : isGeminiProvider
+              ? 'Gemini 原生接口不支持质量参数，分辨率由尺寸设置决定'
+              : 'Codex CLI 不支持质量参数'}
         />
       </div>
       <label
@@ -427,7 +439,7 @@ export default function InputParamsPanel({
               </div>
               <ButtonTooltip
                 visible={moderationDisabled && moderationHint.visible}
-                text="fal.ai 不支持审核参数"
+                text={isGeminiProvider ? 'Gemini 原生接口不支持审核参数' : isGrokProvider ? 'Grok Imagine 不支持审核参数' : 'fal.ai 不支持审核参数'}
               />
             </div>
       </ParamPopoverChip>

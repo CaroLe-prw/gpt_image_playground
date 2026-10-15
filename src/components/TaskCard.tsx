@@ -5,7 +5,7 @@ import { ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imag
 import { useNearViewport } from '../hooks/useNearViewport'
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
-import { DEFAULT_FAL_MODEL, DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
+import { DEFAULT_FAL_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getTaskPromptText } from '../lib/promptImageMentions'
 import { CodeIcon, TransparentBgIcon } from './icons'
@@ -328,7 +328,7 @@ export default function TaskCard({
   const requestedOutputCount = Math.max(task.params.n, outputSuccessCount + outputErrorCount)
   const hasPartialOutputFailure = task.status === 'done' && outputErrorCount > 0
 
-  const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL
+  const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : task.apiProvider === 'gemini' ? DEFAULT_GEMINI_MODEL : task.apiProvider === 'grok' ? DEFAULT_GROK_MODEL : DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
   const isInterrupted = task.status === 'error' && task.error === '已停止生成。'
 

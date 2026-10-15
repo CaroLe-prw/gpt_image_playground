@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
-import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
+import { createDefaultFalProfile, createDefaultGeminiProfile, createDefaultGrokProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
 import { getOutputImageLimitForSettings, normalizeParamsForSettings } from './paramCompatibility'
 
 describe('parameter compatibility', () => {
@@ -26,6 +26,56 @@ describe('parameter compatibility', () => {
 
     expect(getOutputImageLimitForSettings(settings)).toBe(4)
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, n: 8 }, settings).n).toBe(4)
+  })
+
+  it('resets unsupported Gemini parameters and preserves local output conversion settings', () => {
+    const profile = createDefaultGeminiProfile({ apiKey: 'gemini-key' })
+    const settings = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      profiles: [profile],
+      activeProfileId: profile.id,
+    })
+
+    expect(getOutputImageLimitForSettings(settings)).toBe(10)
+    expect(normalizeParamsForSettings({
+      ...DEFAULT_PARAMS,
+      n: 12,
+      quality: 'max',
+      moderation: 'low',
+      output_format: 'webp',
+      output_compression: 80,
+    }, settings)).toMatchObject({
+      n: 10,
+      quality: DEFAULT_PARAMS.quality,
+      moderation: DEFAULT_PARAMS.moderation,
+      output_format: 'webp',
+      output_compression: 80,
+    })
+  })
+
+  it('limits Grok quality to auto, low or medium and preserves local output settings', () => {
+    const profile = createDefaultGrokProfile({ apiKey: 'grok-key' })
+    const settings = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      profiles: [profile],
+      activeProfileId: profile.id,
+    })
+
+    expect(getOutputImageLimitForSettings(settings)).toBe(10)
+    expect(normalizeParamsForSettings({
+      ...DEFAULT_PARAMS,
+      n: 12,
+      quality: 'max',
+      moderation: 'low',
+      output_format: 'webp',
+      output_compression: 80,
+    }, settings)).toMatchObject({
+      n: 10,
+      quality: 'medium',
+      moderation: DEFAULT_PARAMS.moderation,
+      output_format: 'webp',
+      output_compression: 80,
+    })
   })
 
   it('keeps OpenAI streaming output count so the request can disable streaming', () => {

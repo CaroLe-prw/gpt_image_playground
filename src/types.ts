@@ -15,7 +15,7 @@ export const ZIP_DOWNLOAD_ROUTE_VALUES = [
 ] as const
 export type ZipDownloadRoute = typeof ZIP_DOWNLOAD_ROUTE_VALUES[number]
 export const DEFAULT_ZIP_DOWNLOAD_ROUTES: ZipDownloadRoute[] = ['task-selection', 'favorite-collection-selection']
-export type BuiltInApiProvider = 'openai' | 'sb2api-async' | 'fal'
+export type BuiltInApiProvider = 'openai' | 'gemini' | 'grok' | 'sb2api-async' | 'fal'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
@@ -412,6 +412,7 @@ export interface StoredImageThumbnail {
 export interface ImageResponseItem {
   b64_json?: string
   url?: string
+  mime_type?: string
   revised_prompt?: string
   size?: string
   quality?: string
