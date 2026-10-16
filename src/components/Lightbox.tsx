@@ -317,6 +317,7 @@ interface LightboxInnerProps {
 
 /** 内部组件：保证挂载时 DOM 已经存在，所有 ref / effect 都可靠 */
 function LightboxInner({ src, comments, imageId, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext, showInputActions, onReplace, onEdit }: LightboxInnerProps) {
+  const isVideo = src.startsWith('data:video/')
   const containerRef = useRef<HTMLDivElement>(null)
   const openedAtRef = useRef(Date.now())
 
@@ -779,13 +780,22 @@ function LightboxInner({ src, comments, imageId, maskPreviewSrc, onClose, showNa
             willChange: 'transform',
           }}
         >
-          <img
-            src={src}
-            data-image-id={imageId}
-            className="saveable-image max-w-[90vw] max-h-[70vh] sm:max-w-[85vw] sm:max-h-[75vh] object-contain rounded-lg shadow-2xl"
-            onDragStart={(e) => e.preventDefault()}
-            alt=""
-          />
+          {isVideo ? (
+            <video
+              src={src}
+              controls
+              preload="metadata"
+              className="max-w-[90vw] max-h-[70vh] sm:max-w-[85vw] sm:max-h-[75vh] object-contain rounded-lg shadow-2xl"
+            />
+          ) : (
+            <img
+              src={src}
+              data-image-id={imageId}
+              className="saveable-image max-w-[90vw] max-h-[70vh] sm:max-w-[85vw] sm:max-h-[75vh] object-contain rounded-lg shadow-2xl"
+              onDragStart={(e) => e.preventDefault()}
+              alt=""
+            />
+          )}
           {maskPreviewSrc && (
             <img
               src={maskPreviewSrc}

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createDefaultGeminiProfile, createDefaultGrokProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS } from './apiProfiles'
+import { createDefaultGeminiProfile, createDefaultGrokProfile, createDefaultGrokVideoProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS } from './apiProfiles'
 import { fetchProfileModels } from './modelCatalog'
 
 function createJsonResponse(payload: unknown, status = 200) {
@@ -115,6 +115,29 @@ describe('fetchProfileModels', () => {
     })
 
     await expect(fetchProfileModels(DEFAULT_SETTINGS, profile)).resolves.toEqual(['grok-imagine-image-2.0'])
+    expect(fetchMock).toHaveBeenCalledWith('https://api.viapi.cc/v1/models', expect.objectContaining({
+      method: 'GET',
+      headers: { Authorization: 'Bearer grok-key' },
+    }))
+  })
+
+  it('requests Grok video models and keeps video generation models', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(createJsonResponse({
+      data: [
+        { id: 'grok-imagine-image-2.0' },
+        { id: 'grok-imagine-video-1.5' },
+        { id: 'grok-imagine-video-1.5-lite' },
+      ],
+    }))
+    const profile = createDefaultGrokVideoProfile({
+      baseUrl: 'https://api.viapi.cc',
+      apiKey: 'grok-key',
+    })
+
+    await expect(fetchProfileModels(DEFAULT_SETTINGS, profile)).resolves.toEqual([
+      'grok-imagine-video-1.5',
+      'grok-imagine-video-1.5-lite',
+    ])
     expect(fetchMock).toHaveBeenCalledWith('https://api.viapi.cc/v1/models', expect.objectContaining({
       method: 'GET',
       headers: { Authorization: 'Bearer grok-key' },

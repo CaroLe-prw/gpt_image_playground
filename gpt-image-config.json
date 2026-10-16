@@ -21,6 +21,13 @@
       "provider": "grok",
       "baseUrl": "https://api.viapi.cc",
       "model": "grok-imagine-image-2.0"
+    },
+    {
+      "id": "grok-video-main",
+      "name": "Grok 视频",
+      "provider": "grok-video",
+      "baseUrl": "https://api.viapi.cc",
+      "model": "grok-imagine-video-1.5"
     }
   ]
 }

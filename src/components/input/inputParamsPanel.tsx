@@ -102,6 +102,7 @@ export default function InputParamsPanel({
   isFalProvider,
   isGeminiProvider,
   isGrokProvider,
+  isGrokVideoProvider,
   isFalTextToImage,
   displaySize,
   qualityOptions,
@@ -154,6 +155,7 @@ export default function InputParamsPanel({
   isFalProvider: boolean
   isGeminiProvider: boolean
   isGrokProvider: boolean
+  isGrokVideoProvider: boolean
   isFalTextToImage: boolean
   displaySize: string
   qualityOptions: Array<{ label: string; value: string }>
@@ -199,13 +201,15 @@ export default function InputParamsPanel({
   onStopBatch: () => void
 }) {
   // 折叠时也展示弹层内每一项的当前值，不支持的参数不显示
-  const moreSummary = [
-    params.output_format.toUpperCase(),
-    showTransparentOutputControl
-      ? `透明 ${transparentOutputEnabled}`
-      : compressionDisabled ? null : `压缩 ${outputCompressionInput || '默认'}`,
-    moderationDisabled ? null : `审核 ${params.moderation}`,
-  ].filter(Boolean).join(' · ')
+  const moreSummary = isGrokVideoProvider
+    ? `音频 ${(params.videoGenerateAudio ?? true) ? '开' : '关'}`
+    : [
+        params.output_format.toUpperCase(),
+        showTransparentOutputControl
+          ? `透明 ${transparentOutputEnabled}`
+          : compressionDisabled ? null : `压缩 ${outputCompressionInput || '默认'}`,
+        moderationDisabled ? null : `审核 ${params.moderation}`,
+      ].filter(Boolean).join(' · ')
   const prefix = (text: string) => <span className="mr-1.5 text-gray-400 dark:text-gray-500">{text}</span>
 
   const batchSummary = batchProgress
@@ -243,109 +247,155 @@ export default function InputParamsPanel({
           <span className="font-mono">{displaySize}</span>
         </button>
         <ButtonTooltip
-          visible={(isFalTextToImage || activeProfile.codexCli || isGeminiProvider || isGrokProvider) && sizeHint.visible}
+          visible={(isFalTextToImage || activeProfile.codexCli || isGeminiProvider || isGrokProvider || isGrokVideoProvider) && sizeHint.visible}
           text={isFalTextToImage
             ? <>fal.ai 的文生图模式不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 参数</>
             : isGeminiProvider
               ? 'Gemini 会映射为支持的宽高比；支持的模型还会映射 1K、2K 或 4K 分辨率档位'
               : isGrokProvider
                 ? 'Grok 会映射为支持的宽高比和 1K、2K 分辨率档位'
-                : 'Codex CLI 不支持尺寸参数，此处设置仅基于提示词工程'}
+                : isGrokVideoProvider
+                  ? 'Grok 视频会映射为支持的宽高比，参考图生视频时由输入图片比例决定'
+                  : 'Codex CLI 不支持尺寸参数，此处设置仅基于提示词工程'}
         />
       </div>
-      <div
-        className="relative max-sm:flex-auto sm:shrink-0"
-        onMouseEnter={qualityHint.show}
-        onMouseLeave={qualityHint.hide}
-        onTouchStart={qualityHint.startTouch}
-        onTouchEnd={qualityHint.clearTimer}
-        onTouchCancel={qualityHint.hide}
-        onClick={qualityHint.show}
-      >
-        <Select
-          value={activeProfile.codexCli || isGeminiProvider ? 'auto' : isFalProvider && params.quality === 'auto' ? 'high' : params.quality}
-          onChange={(val) => {
-            if (!activeProfile.codexCli && !isGeminiProvider) setParams({ quality: val as TaskParams['quality'] })
-          }}
-          options={qualityOptions}
-          disabled={activeProfile.codexCli || isGeminiProvider}
-          prefix={prefix('质量')}
-          menuClassName="min-w-max"
-          className={activeProfile.codexCli || isGeminiProvider ? CHIP_DISABLED_CLASS : CHIP_CLASS}
-        />
-        <ButtonTooltip
-          visible={(activeProfile.codexCli || isFalProvider || isGeminiProvider) && qualityHint.visible}
-          text={isFalProvider
-            ? <>fal.ai 不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 质量参数</>
-            : isGeminiProvider
-              ? 'Gemini 原生接口不支持质量参数，分辨率由尺寸设置决定'
-              : 'Codex CLI 不支持质量参数'}
-        />
-      </div>
-      <label
-        className={`relative flex items-center max-sm:flex-auto sm:shrink-0 ${agentAutoImageCount ? CHIP_DISABLED_CLASS : `${CHIP_CLASS} cursor-text`}`}
-        onMouseEnter={() => { showAgentNHint(); streamConcurrentHint.show() }}
-        onMouseLeave={() => { hideNLimitHint(); streamConcurrentHint.hide() }}
-        onTouchStart={() => { startAgentNHintTouch(); streamConcurrentHint.startTouch() }}
-        onTouchEnd={() => { clearAgentNHintTouchTimer(); streamConcurrentHint.clearTimer() }}
-        onTouchCancel={() => {
-          clearAgentNHintTouchTimer()
-          hideNLimitHint()
-          streamConcurrentHint.hide()
-        }}
-        onClick={() => { showAgentNHint(); streamConcurrentHint.show() }}
-      >
-        {prefix('数量')}
-        <input
-          value={nInput}
-          onChange={(e) => handleNInputChange(e.target.value)}
-          onFocus={() => setNInputFocused(true)}
-          onBlur={() => {
-            setNInputFocused(false)
-            commitN()
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowUp') {
-              handleNLimitIncreaseAttempt(() => e.preventDefault())
-            }
-          }}
-          onWheel={(e) => {
-            if (e.deltaY < 0) {
-              handleNLimitIncreaseAttempt(() => e.preventDefault())
-            }
-          }}
-          disabled={agentAutoImageCount}
-          type={agentAutoImageCount ? 'text' : 'number'}
-          min={agentAutoImageCount ? undefined : 1}
-          max={agentAutoImageCount ? undefined : outputImageLimit}
-          style={{ width: `${Math.max(1, nInput.length)}ch` }}
-          className="bg-transparent text-xs focus:outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-        />
-        <ButtonTooltip visible={nLimitHint.visible} text={nLimitHintText} />
-        <ButtonTooltip visible={streamConcurrentByN && streamConcurrentHint.visible && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
-      </label>
+      {!isGrokVideoProvider && (
+        <>
+          <div
+            className="relative max-sm:flex-auto sm:shrink-0"
+            onMouseEnter={qualityHint.show}
+            onMouseLeave={qualityHint.hide}
+            onTouchStart={qualityHint.startTouch}
+            onTouchEnd={qualityHint.clearTimer}
+            onTouchCancel={qualityHint.hide}
+            onClick={qualityHint.show}
+          >
+            <Select
+              value={activeProfile.codexCli || isGeminiProvider ? 'auto' : isFalProvider && params.quality === 'auto' ? 'high' : params.quality}
+              onChange={(val) => {
+                if (!activeProfile.codexCli && !isGeminiProvider) setParams({ quality: val as TaskParams['quality'] })
+              }}
+              options={qualityOptions}
+              disabled={activeProfile.codexCli || isGeminiProvider}
+              prefix={prefix('质量')}
+              menuClassName="min-w-max"
+              className={activeProfile.codexCli || isGeminiProvider ? CHIP_DISABLED_CLASS : CHIP_CLASS}
+            />
+            <ButtonTooltip
+              visible={(activeProfile.codexCli || isFalProvider || isGeminiProvider) && qualityHint.visible}
+              text={isFalProvider
+                ? <>fal.ai 不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 质量参数</>
+                : isGeminiProvider
+                  ? 'Gemini 原生接口不支持质量参数，分辨率由尺寸设置决定'
+                  : 'Codex CLI 不支持质量参数'}
+            />
+          </div>
+          <label
+            className={`relative flex items-center max-sm:flex-auto sm:shrink-0 ${agentAutoImageCount ? CHIP_DISABLED_CLASS : `${CHIP_CLASS} cursor-text`}`}
+            onMouseEnter={() => { showAgentNHint(); streamConcurrentHint.show() }}
+            onMouseLeave={() => { hideNLimitHint(); streamConcurrentHint.hide() }}
+            onTouchStart={() => { startAgentNHintTouch(); streamConcurrentHint.startTouch() }}
+            onTouchEnd={() => { clearAgentNHintTouchTimer(); streamConcurrentHint.clearTimer() }}
+            onTouchCancel={() => {
+              clearAgentNHintTouchTimer()
+              hideNLimitHint()
+              streamConcurrentHint.hide()
+            }}
+            onClick={() => { showAgentNHint(); streamConcurrentHint.show() }}
+          >
+            {prefix('数量')}
+            <input
+              value={nInput}
+              onChange={(e) => handleNInputChange(e.target.value)}
+              onFocus={() => setNInputFocused(true)}
+              onBlur={() => {
+                setNInputFocused(false)
+                commitN()
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowUp') {
+                  handleNLimitIncreaseAttempt(() => e.preventDefault())
+                }
+              }}
+              onWheel={(e) => {
+                if (e.deltaY < 0) {
+                  handleNLimitIncreaseAttempt(() => e.preventDefault())
+                }
+              }}
+              disabled={agentAutoImageCount}
+              type={agentAutoImageCount ? 'text' : 'number'}
+              min={agentAutoImageCount ? undefined : 1}
+              max={agentAutoImageCount ? undefined : outputImageLimit}
+              style={{ width: `${Math.max(1, nInput.length)}ch` }}
+              className="bg-transparent text-xs focus:outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+            <ButtonTooltip visible={nLimitHint.visible} text={nLimitHintText} />
+            <ButtonTooltip visible={streamConcurrentByN && streamConcurrentHint.visible && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
+          </label>
+        </>
+      )}
+      {isGrokVideoProvider && (
+        <>
+          <div className="relative max-sm:flex-auto sm:shrink-0">
+            <Select
+              value={String(params.videoDuration ?? 8)}
+              onChange={(val) => setParams({ videoDuration: Number(val) })}
+              options={Array.from({ length: 15 }, (_, index) => ({ label: `${index + 1} 秒`, value: String(index + 1) }))}
+              prefix={prefix('时长')}
+              menuClassName="min-w-max"
+              className={CHIP_CLASS}
+            />
+          </div>
+          <div className="relative max-sm:flex-auto sm:shrink-0">
+            <Select
+              value={params.videoResolution ?? '720p'}
+              onChange={(val) => setParams({ videoResolution: val as TaskParams['videoResolution'] })}
+              options={[
+                { label: '480p', value: '480p' },
+                { label: '720p', value: '720p' },
+                { label: '1080p', value: '1080p' },
+              ]}
+              prefix={prefix('分辨率')}
+              menuClassName="min-w-max"
+              className={CHIP_CLASS}
+            />
+          </div>
+        </>
+      )}
       <ParamPopoverChip label="更多" summary={moreSummary} className="sm:min-w-[5rem]">
-            <div className={ROW_CLASS}>
-              <span className={ROW_LABEL_CLASS}>格式</span>
-              <div className="w-28">
-                <Select
-                  value={params.output_format}
-                  onChange={(val) => {
-                    setParams({
-                      output_format: val as TaskParams['output_format'],
-                      ...(val === 'png' ? { output_compression: null } : {}),
-                      ...(val === 'jpeg' ? { transparent_output: false } : {}),
-                    })
-                  }}
-                  options={[
-                    { label: 'PNG', value: 'png' },
-                    { label: 'JPEG', value: 'jpeg' },
-                    { label: 'WebP', value: 'webp' },
-                  ]}
-                  className={selectClass}
+            {isGrokVideoProvider && (
+              <div className={ROW_CLASS}>
+                <span className={ROW_LABEL_CLASS}>生成音频</span>
+                <Switch
+                  checked={params.videoGenerateAudio ?? true}
+                  onToggle={() => setParams({ videoGenerateAudio: !(params.videoGenerateAudio ?? true) })}
+                  label="生成音频"
                 />
               </div>
-            </div>
+            )}
+            {!isGrokVideoProvider && (
+              <div className={ROW_CLASS}>
+                <span className={ROW_LABEL_CLASS}>格式</span>
+                <div className="w-28">
+                  <Select
+                    value={params.output_format}
+                    onChange={(val) => {
+                      setParams({
+                        output_format: val as TaskParams['output_format'],
+                        ...(val === 'png' ? { output_compression: null } : {}),
+                        ...(val === 'jpeg' ? { transparent_output: false } : {}),
+                      })
+                    }}
+                    options={[
+                      { label: 'PNG', value: 'png' },
+                      { label: 'JPEG', value: 'jpeg' },
+                      { label: 'WebP', value: 'webp' },
+                    ]}
+                    className={selectClass}
+                  />
+                </div>
+              </div>
+            )}
             {showTransparentOutputControl && (
               <div
                 className={ROW_CLASS}
@@ -381,7 +431,7 @@ export default function InputParamsPanel({
                 />
               </div>
             )}
-            {!showTransparentOutputControl && (
+            {!showTransparentOutputControl && !isGrokVideoProvider && (
               <label
                 className={ROW_CLASS}
                 onMouseEnter={compressionHint.show}
@@ -413,35 +463,37 @@ export default function InputParamsPanel({
                 />
               </label>
             )}
-            <div
-              className={ROW_CLASS}
-              onMouseEnter={moderationHint.show}
-              onMouseLeave={moderationHint.hide}
-              onTouchStart={moderationHint.startTouch}
-              onTouchEnd={moderationHint.clearTimer}
-              onTouchCancel={moderationHint.hide}
-              onClick={moderationHint.show}
-            >
-              <span className={ROW_LABEL_CLASS}>审核</span>
-              <div className="w-28">
-                <Select
-                  value={moderationDisabled ? 'auto' : params.moderation}
-                  onChange={(val) => {
-                    if (!moderationDisabled) setParams({ moderation: val as TaskParams['moderation'] })
-                  }}
-                  options={[
-                    { label: 'auto', value: 'auto' },
-                    { label: 'low', value: 'low' },
-                  ]}
-                  disabled={moderationDisabled}
-                  className={moderationDisabled ? CONTROL_DISABLED_CLASS : selectClass}
+            {!isGrokVideoProvider && (
+              <div
+                className={ROW_CLASS}
+                onMouseEnter={moderationHint.show}
+                onMouseLeave={moderationHint.hide}
+                onTouchStart={moderationHint.startTouch}
+                onTouchEnd={moderationHint.clearTimer}
+                onTouchCancel={moderationHint.hide}
+                onClick={moderationHint.show}
+              >
+                <span className={ROW_LABEL_CLASS}>审核</span>
+                <div className="w-28">
+                  <Select
+                    value={moderationDisabled ? 'auto' : params.moderation}
+                    onChange={(val) => {
+                      if (!moderationDisabled) setParams({ moderation: val as TaskParams['moderation'] })
+                    }}
+                    options={[
+                      { label: 'auto', value: 'auto' },
+                      { label: 'low', value: 'low' },
+                    ]}
+                    disabled={moderationDisabled}
+                    className={moderationDisabled ? CONTROL_DISABLED_CLASS : selectClass}
+                  />
+                </div>
+                <ButtonTooltip
+                  visible={moderationDisabled && moderationHint.visible}
+                  text={isGeminiProvider ? 'Gemini 原生接口不支持审核参数' : isGrokProvider ? 'Grok Imagine 不支持审核参数' : 'fal.ai 不支持审核参数'}
                 />
               </div>
-              <ButtonTooltip
-                visible={moderationDisabled && moderationHint.visible}
-                text={isGeminiProvider ? 'Gemini 原生接口不支持审核参数' : isGrokProvider ? 'Grok Imagine 不支持审核参数' : 'fal.ai 不支持审核参数'}
-              />
-            </div>
+            )}
       </ParamPopoverChip>
       {showBatch && (
         <ParamPopoverChip label="批量" summary={batchSummary} active={batchEnabled || Boolean(batchProgress)} className="sm:shrink-0">

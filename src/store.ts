@@ -54,6 +54,7 @@ import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCu
 import { showBrowserNotification } from './lib/browserNotification'
 import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
+import { getGrokVideoResult } from './lib/grokVideoApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
@@ -1816,6 +1817,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
       id: genId(),
       prompt: taskPrompt,
       params: taskParams,
+      mediaType: activeProfile.provider === 'grok-video' ? 'video' : undefined,
       apiProvider: activeProfile.provider,
       apiProfileId: activeProfile.id,
       apiProfileName: activeProfile.name,
@@ -3778,12 +3780,14 @@ async function executeTask(taskId: string) {
 
     // 存储输出图片
     const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
-    const isAsyncCustomTask = taskProvider !== 'fal' && taskProvider !== 'openai' && Boolean(customTaskInfo)
-    const actualParamsList = await resolveImageSizeParamsList(
-      outputDataUrls,
-      isAsyncCustomTask ? undefined : result.actualParamsList,
-      outputImageSizes,
-    )
+    const isAsyncCustomTask = taskProvider !== 'fal' && taskProvider !== 'openai' && taskProvider !== 'grok-video' && Boolean(customTaskInfo)
+    const actualParamsList = taskProvider === 'grok-video'
+      ? result.actualParamsList
+      : await resolveImageSizeParamsList(
+          outputDataUrls,
+          isAsyncCustomTask ? undefined : result.actualParamsList,
+          outputImageSizes,
+        )
     const actualParams = deriveGalleryActualParams(taskProvider, isAsyncCustomTask, result.actualParams, actualParamsList, outputIds.length)
     const shouldStoreRevisedPrompts = taskProvider !== 'fal' && !isAsyncCustomTask
     const actualParamsByImage = mapActualParamsByImage(outputIds, actualParamsList)
@@ -4006,11 +4010,21 @@ export async function deleteFavoriteCollection(collectionId: string, deleteTasks
   useStore.getState().showToast(`已删除收藏夹「${collection.name}」`, 'success')
 }
 
-/** 按重试方式新建任务或覆盖原任务；Agent 对话中的任务始终新建 */
+/** 视频下载失败时只重新获取原结果；生成失败按重试方式新建或覆盖任务 */
 export async function retryTask(task: TaskRecord) {
   const { settings, tasks } = useStore.getState()
   const source = tasks.find((item) => item.id === task.id)
   if (!source || source.status === 'running' || source.falRecoverable || source.customRecoverable) return
+  if (source.apiProvider === 'grok-video' && source.status === 'error' && source.customTaskId && source.rawImageUrls?.length) {
+    const profile = getCustomRecoveryProfile(settings, source)
+    if (!profile?.apiKey.trim()) {
+      useStore.getState().showToast('原任务的 Grok 视频配置不可用，请恢复配置并填写 API Key 后重新获取。', 'error')
+      return
+    }
+    updateTaskInStore(source.id, { customRecoverable: true })
+    await recoverCustomTask(source.id)
+    return
+  }
   const activeProfile = getActiveApiProfile(settings)
   const normalizedParams = normalizeParamsForSettings(source.params, settings, { hasInputImages: source.inputImageIds.length > 0 })
   const shouldUseTransparentOutput = (normalizedParams.output_format === 'png' || normalizedParams.output_format === 'webp') && normalizedParams.transparent_output
@@ -4030,6 +4044,7 @@ export async function retryTask(task: TaskRecord) {
     id: taskId,
     prompt: source.prompt,
     params: taskParams,
+    mediaType: activeProfile.provider === 'grok-video' ? 'video' : undefined,
     apiProvider: activeProfile.provider,
     apiProfileId: activeProfile.id,
     apiProfileName: activeProfile.name,
@@ -4162,10 +4177,28 @@ export async function reuseConfig(task: TaskRecord) {
   )
 }
 
-/** 编辑输出：将输出图加入输入 */
-export async function editOutputs(task: TaskRecord) {
+/** 图片直接加入输入；视频先选择画面，再把截帧作为独立图片保存 */
+export async function editOutputs(task: TaskRecord, frameDataUrl?: string) {
   const { inputImages, addInputImage, showToast } = useStore.getState()
   if (!task.outputImages?.length) return
+
+  if (task.mediaType === 'video' || task.apiProvider === 'grok-video') {
+    if (!frameDataUrl) {
+      useStore.getState().setDetailTaskId(task.id)
+      showToast('拖动视频进度条选择画面，再点击「截取当前帧」', 'info')
+      return
+    }
+    if (!frameDataUrl.startsWith('data:image/png;base64,')) throw new Error('请先从视频截取一帧图片。')
+    const id = await storeImage(frameDataUrl, 'generated')
+    cacheImage(id, frameDataUrl)
+    const state = useStore.getState()
+    // 清理旧版本误放进参考图区的视频，并让原有提示词引用指向截帧。
+    const images = state.inputImages.filter((img) => !task.outputImages.includes(img.id))
+    if (!images.some((img) => img.id === id)) images.push({ id, dataUrl: frameDataUrl })
+    state.setInputImages(images, { equivalentImageIds: Object.fromEntries(task.outputImages.map((videoId) => [videoId, id])) })
+    showToast('已截取当前帧并添加为参考图', 'success')
+    return
+  }
 
   let added = 0
   for (const imgId of task.outputImages) {
@@ -4481,7 +4514,9 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
   if (latest.status !== 'running' && !latest.customRecoverable) return
 
   const { outputIds, outputDataUrls, outputImageSizes, transparentOriginalImageIds } = await storeTaskOutputImages(task, result.images)
-  const actualParamsList = await resolveImageSizeParamsList(outputDataUrls, undefined, outputImageSizes)
+  const actualParamsList = task.apiProvider === 'grok-video'
+    ? result.actualParamsList
+    : await resolveImageSizeParamsList(outputDataUrls, undefined, outputImageSizes)
   const latestBeforeUpdate = useStore.getState().tasks.find((item) => item.id === task.id)
   if (!latestBeforeUpdate || latestBeforeUpdate.status === 'done' || latestBeforeUpdate.error === AGENT_STOPPED_MESSAGE || (latestBeforeUpdate.status !== 'running' && !latestBeforeUpdate.customRecoverable)) {
     await deleteUnreferencedImageIds([...outputIds, ...(transparentOriginalImageIds ?? [])])
@@ -4494,11 +4529,15 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
     actualParams: firstActualParams(actualParamsList),
     actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
     revisedPromptByImage: undefined,
+    ...(task.apiProvider === 'grok-video' ? { rawImageUrls: result.rawImageUrls } : {}),
     ...createTaskDonePatch(task, Date.now()),
+    // 手动重新下载已生成的视频时，等待操作的时间不计入原生成耗时。
+    ...(task.apiProvider === 'grok-video' && task.rawImageUrls?.length && task.elapsed != null ? { elapsed: task.elapsed } : {}),
     customRecoverable: false,
   })
-  useStore.getState().showToast(`自定义异步任务已恢复，共 ${outputIds.length} 张图片`, 'success')
-  if (!isAgentTask(task)) showTaskCompletionNotification('图像生成完成', `自定义异步任务已恢复，共 ${outputIds.length} 张图片。`)
+  const message = task.apiProvider === 'grok-video' ? '视频已重新获取' : `自定义异步任务已恢复，共 ${outputIds.length} 张图片`
+  useStore.getState().showToast(message, 'success')
+  if (!isAgentTask(task)) showTaskCompletionNotification(task.apiProvider === 'grok-video' ? '视频已获取' : '图像生成完成', `${message}。`)
   else void continueRecoveredAgentRound(task.id)
 }
 
@@ -4509,13 +4548,15 @@ async function recoverCustomTask(taskId: string) {
 
   const profile = getCustomRecoveryProfile(settings, task)
   const customProvider = profile ? getCustomProviderDefinition(settings, profile.provider) : null
-  if (!profile || !customProvider?.poll) {
+  if (!profile || (profile.provider !== 'grok-video' && !customProvider?.poll)) {
     scheduleCustomRecovery(taskId)
     return
   }
 
   try {
-    const result = await getCustomQueuedImageResult(profile, customProvider, task.customTaskId, task.params)
+    const result = profile.provider === 'grok-video'
+      ? await getGrokVideoResult(profile, task.customTaskId)
+      : await getCustomQueuedImageResult(profile, customProvider!, task.customTaskId, task.params)
     clearCustomRecoveryTimer(taskId)
     await completeRecoveredCustomTask(task, result)
   } catch (err) {
@@ -4524,6 +4565,7 @@ async function recoverCustomTask(taskId: string) {
     const error = err instanceof Error ? err.message : String(err)
     updateTaskInStore(taskId, {
       ...createTaskErrorPatch(task, error, Date.now()),
+      ...(task.apiProvider === 'grok-video' && task.rawImageUrls?.length && task.elapsed != null ? { elapsed: task.elapsed } : {}),
       ...getRawErrorPayload(err),
       customRecoverable: false,
     })

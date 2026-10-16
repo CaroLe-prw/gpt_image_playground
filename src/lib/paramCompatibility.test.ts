@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS } from '../types'
-import { createDefaultFalProfile, createDefaultGeminiProfile, createDefaultGrokProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
+import { createDefaultFalProfile, createDefaultGeminiProfile, createDefaultGrokProfile, createDefaultGrokVideoProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './apiProfiles'
 import { getOutputImageLimitForSettings, normalizeParamsForSettings } from './paramCompatibility'
 
 describe('parameter compatibility', () => {
@@ -75,6 +75,37 @@ describe('parameter compatibility', () => {
       moderation: DEFAULT_PARAMS.moderation,
       output_format: 'webp',
       output_compression: 80,
+    })
+  })
+
+  it('normalizes Grok video duration, resolution and image-only parameters', () => {
+    const profile = createDefaultGrokVideoProfile({ apiKey: 'grok-key' })
+    const settings = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      profiles: [profile],
+      activeProfileId: profile.id,
+    })
+
+    expect(getOutputImageLimitForSettings(settings)).toBe(1)
+    expect(normalizeParamsForSettings({
+      ...DEFAULT_PARAMS,
+      n: 5,
+      quality: 'max',
+      moderation: 'low',
+      output_compression: 80,
+      transparent_output: true,
+      videoDuration: 20,
+      videoResolution: '1080p',
+      videoGenerateAudio: false,
+    }, settings)).toMatchObject({
+      n: 1,
+      quality: DEFAULT_PARAMS.quality,
+      moderation: DEFAULT_PARAMS.moderation,
+      output_compression: DEFAULT_PARAMS.output_compression,
+      transparent_output: false,
+      videoDuration: 15,
+      videoResolution: '1080p',
+      videoGenerateAudio: false,
     })
   })
 

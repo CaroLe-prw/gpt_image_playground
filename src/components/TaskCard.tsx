@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef, type ReactNode } from 'react'
 import type { TaskRecord } from '../types'
 import { useStore, retryTask } from '../store'
-import { ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imageCache'
+import { ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imageCache'
 import { useNearViewport } from '../hooks/useNearViewport'
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
-import { DEFAULT_FAL_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
+import { DEFAULT_FAL_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_GROK_VIDEO_MODEL, DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getTaskPromptText } from '../lib/promptImageMentions'
 import { CodeIcon, TransparentBgIcon } from './icons'
@@ -69,6 +69,7 @@ export default function TaskCard({
   isSelected,
   disableSwipe,
 }: Props) {
+  const isVideo = task.mediaType === 'video' || task.apiProvider === 'grok-video'
   const [thumbSrc, setThumbSrc] = useState<string>('')
   const [coverRatio, setCoverRatio] = useState<string>('')
   const [coverSize, setCoverSize] = useState<string>('')
@@ -270,7 +271,13 @@ export default function TaskCard({
       }
     }
 
-    if (imageId) {
+    if (imageId && isVideo) {
+      ensureImageCached(imageId).then((src) => {
+        if (!cancelled && src) setThumbSrc(src)
+      }).catch(() => {
+        if (!cancelled) setThumbSrc('')
+      })
+    } else if (imageId) {
       unsubscribe = subscribeImageThumbnail(imageId, applyThumbnail)
       ensureImageThumbnailCached(imageId).then((thumbnail) => {
         if (cancelled || !thumbnail) return
@@ -284,11 +291,12 @@ export default function TaskCard({
       cancelled = true
       unsubscribe?.()
     }
-  }, [nearViewport, task.outputImages])
+  }, [nearViewport, task.outputImages, isVideo])
 
+  const isVideoDownloadRecovery = isVideo && task.customRecoverable && task.rawImageUrls?.length && task.elapsed != null
   const duration = (() => {
     let seconds: number
-    if (task.status === 'running' || task.falRecoverable || task.customRecoverable) {
+    if (task.status === 'running' || task.falRecoverable || (task.customRecoverable && !isVideoDownloadRecovery)) {
       seconds = Math.floor((now - (task.startedAt ?? task.createdAt)) / 1000)
     } else if (task.elapsed != null) {
       seconds = Math.floor(task.elapsed / 1000)
@@ -310,14 +318,14 @@ export default function TaskCard({
     : 'bg-gray-200 dark:bg-gray-700'
 
   const qualityDisplay = getParamDisplay(task, 'quality')
-  const showQuality = task.params.quality !== 'auto' || qualityDisplay.isMismatch
+  const showQuality = !isVideo && (task.params.quality !== 'auto' || qualityDisplay.isMismatch)
 
   const sizeDisplay = getParamDisplay(task, 'size')
   const showSize = task.params.size !== 'auto' || sizeDisplay.isMismatch
 
   const formatDisplay = getParamDisplay(task, 'output_format')
-  const showFormat = task.params.output_format !== 'png' || formatDisplay.isMismatch
-  const showTransparentOutput = task.transparentOutput || task.params.transparent_output
+  const showFormat = !isVideo && (task.params.output_format !== 'png' || formatDisplay.isMismatch)
+  const showTransparentOutput = !isVideo && (task.transparentOutput || task.params.transparent_output)
 
   const nDisplay = getParamDisplay(task, 'n')
   const isAgentTask = task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
@@ -328,7 +336,7 @@ export default function TaskCard({
   const requestedOutputCount = Math.max(task.params.n, outputSuccessCount + outputErrorCount)
   const hasPartialOutputFailure = task.status === 'done' && outputErrorCount > 0
 
-  const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : task.apiProvider === 'gemini' ? DEFAULT_GEMINI_MODEL : task.apiProvider === 'grok' ? DEFAULT_GROK_MODEL : DEFAULT_IMAGES_MODEL
+  const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : task.apiProvider === 'gemini' ? DEFAULT_GEMINI_MODEL : task.apiProvider === 'grok' ? DEFAULT_GROK_MODEL : task.apiProvider === 'grok-video' ? DEFAULT_GROK_VIDEO_MODEL : DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
   const isInterrupted = task.status === 'error' && task.error === '已停止生成。'
 
@@ -376,9 +384,9 @@ export default function TaskCard({
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchCancel}
-        draggable={task.status === 'done' && task.outputImages?.length > 0}
+        draggable={!isVideo && task.status === 'done' && task.outputImages?.length > 0}
         onDragStart={(e) => {
-          if (task.status !== 'done' || !task.outputImages?.length) return;
+          if (isVideo || task.status !== 'done' || !task.outputImages?.length) return;
           const imageIds = task.outputImages;
           e.dataTransfer.setData('text/plain', `agent-images:${imageIds.join(',')}`);
           e.dataTransfer.effectAllowed = 'copy';
@@ -489,14 +497,23 @@ export default function TaskCard({
           )}
           {task.status === 'done' && thumbSrc && (
             <>
-              <img
-                src={thumbSrc}
-                data-image-id={task.outputImages[0]}
-                data-output-image-ids={task.outputImages.join(',')}
-                className="saveable-image w-full h-full object-cover"
-                loading="lazy"
-                alt=""
-              />
+              {isVideo ? (
+                <video
+                  src={thumbSrc}
+                  controls
+                  preload="metadata"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <img
+                  src={thumbSrc}
+                  data-image-id={task.outputImages[0]}
+                  data-output-image-ids={task.outputImages.join(',')}
+                  className="saveable-image w-full h-full object-cover"
+                  loading="lazy"
+                  alt=""
+                />
+              )}
               {(hasPartialOutputFailure || task.outputImages.length > 1) && (
                 <span className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">
                   {hasPartialOutputFailure ? <>{requestedOutputCount} | <span className="font-semibold text-yellow-300">{outputSuccessCount}</span></> : task.outputImages.length}
@@ -526,7 +543,7 @@ export default function TaskCard({
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                {duration}
+                {isVideo && '生成耗时 '}{duration}
               </span>
             ) : (
               <>
@@ -608,6 +625,18 @@ export default function TaskCard({
                 </span>
               )}
               {/* Params: only show if not default or mismatch */}
+              {isVideo && (
+                <>
+                  <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-gray-600 dark:text-gray-300 text-xs flex-shrink-0">
+                    请求时长 {task.params.videoDuration ?? 8} 秒
+                  </span>
+                  {task.actualParams?.videoDuration != null && (
+                    <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-gray-600 dark:text-gray-300 text-xs flex-shrink-0">
+                      视频时长 {task.actualParams.videoDuration} 秒
+                    </span>
+                  )}
+                </>
+              )}
               {showQuality && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-xs flex-shrink-0">
                   <span className="text-gray-400 dark:text-gray-500">质量</span>
@@ -645,7 +674,7 @@ export default function TaskCard({
             >
               {((task.status === 'error' && !isFalReconnecting && !isCustomReconnecting) || (task.status === 'done' && settings.alwaysShowRetryButton)) && (
                 <TaskActionButton
-                  tooltip="重试任务"
+                  tooltip={isVideo && task.status === 'error' && task.customTaskId && task.rawImageUrls?.length ? '重新获取视频' : '重试任务'}
                   onClick={() => retryTask(task)}
                   className="p-1.5 rounded-md hover:bg-blue-50 dark:hover:bg-blue-950/30 text-gray-400 hover:text-blue-500 transition"
                 >
@@ -697,7 +726,7 @@ export default function TaskCard({
                 </svg>
               </TaskActionButton>
               <TaskActionButton
-                tooltip="编辑输出"
+                tooltip={isVideo ? '截帧继续生成' : '编辑输出'}
                 onClick={onEditOutputs}
                 className="p-1.5 rounded-md hover:bg-green-50 dark:hover:bg-green-950/30 text-gray-400 hover:text-green-500 transition disabled:opacity-30"
                 disabled={!task.outputImages?.length}

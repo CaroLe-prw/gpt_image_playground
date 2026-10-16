@@ -8,6 +8,7 @@ import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyImageSourceToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
+import { captureVideoFrame } from '../lib/videoFrame'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageEntriesAsZip, downloadImageIds, getDownloadErrorMessage, getImageZipEntries, withSaveLocation } from '../lib/downloadImages'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
@@ -16,6 +17,7 @@ import { getApiProviderLabel } from '../lib/apiProfiles'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 
 import ViewportTooltip from './ViewportTooltip'
+import VideoTaskParams from './VideoTaskParams'
 import { CommentBadge } from './CommentMarks'
 
 export default function DetailModal() {
@@ -36,12 +38,15 @@ export default function DetailModal() {
   const [outputPreviewSrcs, setOutputPreviewSrcs] = useState<Record<string, string>>({})
   const [imageRatios, setImageRatios] = useState<Record<string, string>>({})
   const [imageSizes, setImageSizes] = useState<Record<string, string>>({})
+  const [videoMeta, setVideoMeta] = useState<Record<string, { duration?: number; failed?: boolean }>>({})
+  const [addingOutput, setAddingOutput] = useState(false)
   const [maskPreviewSrc, setMaskPreviewSrc] = useState('')
   const [now, setNow] = useState(Date.now())
   const [showRawUrlsModal, setShowRawUrlsModal] = useState(false)
   const [showRawResponseModal, setShowRawResponseModal] = useState(false)
   const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
   const modalRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const rawUrlsModalRef = useRef<HTMLDivElement>(null)
   const rawResponseModalRef = useRef<HTMLDivElement>(null)
 
@@ -122,6 +127,7 @@ export default function DetailModal() {
       setOutputPreviewSrcs({})
       setImageRatios({})
       setImageSizes({})
+      setVideoMeta({})
       return
     }
 
@@ -233,6 +239,7 @@ export default function DetailModal() {
 
   if (!task) return null
 
+  const isVideo = task.mediaType === 'video' || task.apiProvider === 'grok-video'
   const isAgentTask = task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
   const showPendingPrompt = isAgentTaskPromptPending(task)
   const isAgentEditTool = task.status === 'done' && String(task.agentToolAction ?? '').toLowerCase() === 'edit'
@@ -267,6 +274,8 @@ export default function DetailModal() {
   const isFalReconnecting = task.status === 'error' && task.falRecoverable
   const isCustomReconnecting = task.status === 'error' && task.customRecoverable
   const rawImageUrls = task.rawImageUrls ?? []
+  const retryLabel = isVideo && task.status === 'error' && task.customTaskId && rawImageUrls.length ? '重新获取视频' : '重试任务'
+  const isVideoDownloadRecovery = isVideo && isCustomReconnecting && rawImageUrls.length > 0 && task.elapsed != null
   const streamPreviewLen = streamPreviewItems.length
   const currentStreamPreviewSrc = activeStreamPreviewSrc
   const streamPartialImageIds = task.streamPartialImageIds ?? []
@@ -281,7 +290,7 @@ export default function DetailModal() {
   }
 
   const formatDuration = () => {
-    if (task.status === 'running' || isFalReconnecting || isCustomReconnecting) {
+    if (task.status === 'running' || isFalReconnecting || (isCustomReconnecting && !isVideoDownloadRecovery)) {
       const seconds = Math.max(0, Math.floor((now - (task.startedAt ?? task.createdAt)) / 1000))
       const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
       const ss = String(seconds % 60).padStart(2, '0')
@@ -299,9 +308,22 @@ export default function DetailModal() {
     setDetailTaskId(null)
   }
 
-  const handleEdit = () => {
-    editOutputs(task)
-    setDetailTaskId(null)
+  const handleEdit = async () => {
+    if (isVideo && !videoRef.current) {
+      showToast('视频尚未加载，请稍后再截帧。', 'error')
+      return
+    }
+    setAddingOutput(true)
+    try {
+      const frame = isVideo ? captureVideoFrame(videoRef.current!) : undefined
+      await editOutputs(task, frame)
+      setDetailTaskId(null)
+    } catch (err) {
+      console.warn('添加输出到参考图失败', err)
+      showToast(err instanceof Error ? err.message : '添加参考图失败', 'error')
+    } finally {
+      setAddingOutput(false)
+    }
   }
 
   const handleDelete = () => {
@@ -479,12 +501,12 @@ export default function DetailModal() {
                       handleDownloadCurrentOutput(e)
                     }}
                       className="flex items-center justify-center px-1.5 py-0.5 bg-black/50 text-white rounded backdrop-blur-sm hover:bg-black/70 transition focus:outline-none focus:ring-1 focus:ring-white/50"
-                    aria-label="下载图片"
+                    aria-label={isVideo ? '下载视频' : '下载图片'}
                   >
                     <DownloadIcon className="h-4 w-4" />
                   </button>
                   <ViewportTooltip visible={downloadImageTooltip.visible} className="whitespace-nowrap">
-                    下载图片
+                    {isVideo ? '下载视频' : '下载图片'}
                   </ViewportTooltip>
                 </div>
               )}
@@ -512,28 +534,65 @@ export default function DetailModal() {
           )}
           {task.status === 'done' && outputLen > 0 && currentOutputPreviewSrc && (
             <>
-              <img
-                src={currentOutputPreviewSrc}
-                data-image-id={currentOutputImageId}
-                className="saveable-image max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] object-contain cursor-pointer"
-                onLoad={(e) => {
-                  const image = e.currentTarget
-                  if (currentOutputImageId && image.naturalWidth > 0 && image.naturalHeight > 0) {
-                    setImageRatios((prev) => ({
-                      ...prev,
-                      [currentOutputImageId]: formatImageRatio(image.naturalWidth, image.naturalHeight),
-                    }))
-                    setImageSizes((prev) => ({
-                      ...prev,
-                      [currentOutputImageId]: `${image.naturalWidth}×${image.naturalHeight}`,
-                    }))
+              {isVideo ? (
+                <div className="flex w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] flex-col">
+                  <video
+                    key={currentOutputImageId}
+                    ref={videoRef}
+                    src={currentOutputPreviewSrc}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="min-h-0 w-full max-h-[60vh] object-contain"
+                    onLoadedMetadata={(e) => {
+                      const duration = e.currentTarget.duration
+                      setVideoMeta((prev) => ({
+                        ...prev,
+                        [currentOutputImageId]: { duration: Number.isFinite(duration) && duration > 0 ? duration : undefined },
+                      }))
+                    }}
+                    onError={() => setVideoMeta((prev) => ({ ...prev, [currentOutputImageId]: { failed: true } }))}
+                  />
+                  {videoMeta[currentOutputImageId]?.failed && (
+                    <p role="alert" className="mt-2 shrink-0 text-center text-sm text-red-500">视频无法播放，文件可能无效或格式不受支持。</p>
+                  )}
+                  {!videoMeta[currentOutputImageId]?.failed && (
+                    <p className="mt-2 shrink-0 text-center text-xs text-gray-500 dark:text-gray-400">拖动进度条选择画面，点击「截取当前帧」作为参考图。</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleEdit}
+                    disabled={addingOutput || videoMeta[currentOutputImageId]?.failed}
+                    className="mt-3 flex shrink-0 items-center justify-center gap-2 rounded-xl bg-green-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <EditIcon className="h-4 w-4" />
+                    {addingOutput ? '截帧中…' : '截取当前帧'}
+                  </button>
+                </div>
+              ) : (
+                <img
+                  src={currentOutputPreviewSrc}
+                  data-image-id={currentOutputImageId}
+                  className="saveable-image max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] object-contain cursor-pointer"
+                  onLoad={(e) => {
+                    const image = e.currentTarget
+                    if (currentOutputImageId && image.naturalWidth > 0 && image.naturalHeight > 0) {
+                      setImageRatios((prev) => ({
+                        ...prev,
+                        [currentOutputImageId]: formatImageRatio(image.naturalWidth, image.naturalHeight),
+                      }))
+                      setImageSizes((prev) => ({
+                        ...prev,
+                        [currentOutputImageId]: `${image.naturalWidth}×${image.naturalHeight}`,
+                      }))
+                    }
+                  }}
+                  onClick={() =>
+                    setLightboxImageId(currentOutputImageId, task.outputImages)
                   }
-                }}
-                onClick={() =>
-                  setLightboxImageId(currentOutputImageId, task.outputImages)
-                }
-                alt=""
-              />
+                  alt=""
+                />
+              )}
               <div data-selectable-text className="absolute left-4 top-[15px] flex items-center gap-1.5">
                 {currentImageRatio && currentImageSize ? (
                   <>
@@ -550,7 +609,7 @@ export default function DetailModal() {
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      {formatDuration()}
+                      {isVideo && '生成耗时 '}{formatDuration()}
                     </span>
                   )
                 )}
@@ -710,15 +769,15 @@ export default function DetailModal() {
               )}
             </>
           )}
-          {task.status === 'error' && isFalReconnecting && (
+          {task.status === 'error' && (isFalReconnecting || isCustomReconnecting) && (
             <div className="w-full max-w-md px-4 text-center">
               <svg className="w-10 h-10 text-yellow-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              <p className="text-sm font-medium text-yellow-500">重连中</p>
+              <p className="text-sm font-medium text-yellow-500">{isVideoDownloadRecovery ? '正在重新获取视频…' : '重连中'}</p>
             </div>
           )}
-          {task.status === 'error' && !isFalReconnecting && (
+          {task.status === 'error' && !isFalReconnecting && !isCustomReconnecting && (
             <div className="w-full max-w-md px-4 text-center">
               <svg className="w-10 h-10 text-red-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -780,7 +839,7 @@ export default function DetailModal() {
                           copyRawUrlsTooltip.handlers.onClick()
                           try {
                             await copyTextToClipboard(task.rawImageUrls![0])
-                            showToast('图片链接已复制', 'success')
+                            showToast(isVideo ? '视频链接已复制' : '图片链接已复制', 'success')
                           } catch (err) {
                             showToast(getClipboardFailureMessage('复制链接失败', err), 'error')
                           }
@@ -790,12 +849,12 @@ export default function DetailModal() {
                         }
                       }}
                       className="inline-flex items-center justify-center rounded-full border border-green-200/80 bg-green-50 px-3 py-1.5 text-green-600 transition hover:bg-green-100 dark:border-green-500/20 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20"
-                      aria-label="复制图片链接"
+                      aria-label={isVideo ? '复制视频链接' : '复制图片链接'}
                     >
                       <LinkIcon className="h-4 w-4" />
                     </button>
                     <ViewportTooltip visible={copyRawUrlsTooltip.visible} className="whitespace-nowrap">
-                      复制图片链接
+                      {isVideo ? '复制视频链接' : '复制图片链接'}
                     </ViewportTooltip>
                   </div>
                 )}
@@ -828,14 +887,14 @@ export default function DetailModal() {
                         handleRetry()
                       }}
                       className="inline-flex items-center justify-center rounded-full border border-blue-200/80 bg-white/80 px-3 py-1.5 text-blue-500 transition hover:bg-blue-50 dark:border-blue-400/20 dark:bg-white/[0.04] dark:hover:bg-blue-500/10"
-                      aria-label="重试任务"
+                      aria-label={retryLabel}
                     >
                       <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                       </svg>
                     </button>
                     <ViewportTooltip visible={retryTooltip.visible} className="whitespace-nowrap">
-                      重试任务
+                      {retryLabel}
                     </ViewportTooltip>
                   </div>
                 )}
@@ -975,68 +1034,75 @@ export default function DetailModal() {
                 </div>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-2 text-xs mb-4 min-w-0">
-              <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
-                <span className="text-gray-400 dark:text-gray-500">尺寸</span>
-                <br />
-                <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                  <DetailParamValue task={task} paramKey="size" className="font-medium" actualParams={currentActualParams} />
-                </div>
-              </div>
-              <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
-                <span className="text-gray-400 dark:text-gray-500">质量</span>
-                <br />
-                <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                  <DetailParamValue task={task} paramKey="quality" className="font-medium" actualParams={currentActualParams} />
-                </div>
-              </div>
-              <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
-                <span className="text-gray-400 dark:text-gray-500">格式</span>
-                <br />
-                <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                  <DetailParamValue task={task} paramKey="output_format" className="font-medium" actualParams={currentActualParams} />
-                </div>
-              </div>
-              {supportsTransparentOutput && (
+            {isVideo ? (
+              <VideoTaskParams
+                params={task.params}
+                actualDuration={videoMeta[currentOutputImageId]?.duration ?? currentActualParams?.videoDuration}
+              />
+            ) : (
+              <div className="grid grid-cols-2 gap-2 text-xs mb-4 min-w-0">
                 <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
-                  <span className="text-gray-400 dark:text-gray-500">透明背景</span>
+                  <span className="text-gray-400 dark:text-gray-500">尺寸</span>
                   <br />
                   <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                    <span className="font-medium text-gray-700 dark:text-gray-300">{transparentOutputText}</span>
-                    {currentTransparentOutputFailed && (
-                      <span className="ml-1.5 rounded bg-red-50 px-1 py-0.5 text-[10px] font-medium uppercase leading-none text-red-600 dark:bg-red-500/10 dark:text-red-400">
-                        failed
-                      </span>
-                    )}
+                    <DetailParamValue task={task} paramKey="size" className="font-medium" actualParams={currentActualParams} />
                   </div>
                 </div>
-              )}
-              {task.params.output_format !== 'png' && (
                 <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
-                  <span className="text-gray-400 dark:text-gray-500">压缩率</span>
+                  <span className="text-gray-400 dark:text-gray-500">质量</span>
                   <br />
                   <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                    <span className="font-medium text-gray-700 dark:text-gray-300">{outputCompressionText}</span>
+                    <DetailParamValue task={task} paramKey="quality" className="font-medium" actualParams={currentActualParams} />
                   </div>
                 </div>
-              )}
-              <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
-                <span className="text-gray-400 dark:text-gray-500">审核</span>
-                <br />
-                <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                  <DetailParamValue task={task} paramKey="moderation" className="font-medium" actualParams={currentActualParams} />
+                <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
+                  <span className="text-gray-400 dark:text-gray-500">格式</span>
+                  <br />
+                  <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
+                    <DetailParamValue task={task} paramKey="output_format" className="font-medium" actualParams={currentActualParams} />
+                  </div>
                 </div>
+                {supportsTransparentOutput && (
+                  <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
+                    <span className="text-gray-400 dark:text-gray-500">透明背景</span>
+                    <br />
+                    <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
+                      <span className="font-medium text-gray-700 dark:text-gray-300">{transparentOutputText}</span>
+                      {currentTransparentOutputFailed && (
+                        <span className="ml-1.5 rounded bg-red-50 px-1 py-0.5 text-[10px] font-medium uppercase leading-none text-red-600 dark:bg-red-500/10 dark:text-red-400">
+                          failed
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {task.params.output_format !== 'png' && (
+                  <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
+                    <span className="text-gray-400 dark:text-gray-500">压缩率</span>
+                    <br />
+                    <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
+                      <span className="font-medium text-gray-700 dark:text-gray-300">{outputCompressionText}</span>
+                    </div>
+                  </div>
+                )}
+                <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
+                  <span className="text-gray-400 dark:text-gray-500">审核</span>
+                  <br />
+                  <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
+                    <DetailParamValue task={task} paramKey="moderation" className="font-medium" actualParams={currentActualParams} />
+                  </div>
+                </div>
+                {!isAgentTask && (
+                  <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
+                    <span className="text-gray-400 dark:text-gray-500">数量</span>
+                    <br />
+                    <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
+                      <DetailParamValue task={task} paramKey="n" className="font-medium" />
+                    </div>
+                  </div>
+                )}
               </div>
-              {!isAgentTask && (
-                <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">
-                  <span className="text-gray-400 dark:text-gray-500">数量</span>
-                  <br />
-                  <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                    <DetailParamValue task={task} paramKey="n" className="font-medium" />
-                  </div>
-                </div>
-              )}
-            </div>
+            )}
 
             {/* 时间 */}
             <div className="text-xs text-gray-400 dark:text-gray-500 mb-4">
@@ -1058,12 +1124,12 @@ export default function DetailModal() {
                   </ViewportTooltip>
                 </span>
               )}
-              {formatDuration() && <span> · 耗时 {formatDuration()}</span>}
+              {formatDuration() && <span> · 生成耗时 {formatDuration()}</span>}
             </div>
           </div>
 
           {/* 操作按钮 */}
-          <div className="grid grid-cols-4 sm:flex gap-2 pt-4 border-t border-gray-100 dark:border-white/[0.08]">
+          <div className={`grid ${isVideo ? 'grid-cols-5' : 'grid-cols-4'} sm:flex gap-2 pt-4 border-t border-gray-100 dark:border-white/[0.08]`}>
             <button
               onClick={handleReuse}
               className="col-span-2 sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-500/20 transition text-sm font-medium whitespace-nowrap"
@@ -1073,17 +1139,19 @@ export default function DetailModal() {
               </svg>
               复用配置
             </button>
-            <button
-              onClick={handleEdit}
-              disabled={!outputLen}
-              className="col-span-2 sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-green-50 dark:bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition text-sm font-medium whitespace-nowrap"
-            >
-              <EditIcon className="w-4 h-4 flex-shrink-0" />
-              编辑输出
-            </button>
+            {!isVideo && (
+              <button
+                onClick={handleEdit}
+                disabled={!outputLen || addingOutput}
+                className="col-span-2 sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-green-50 dark:bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition text-sm font-medium whitespace-nowrap"
+              >
+                <EditIcon className="w-4 h-4 flex-shrink-0" />
+                编辑输出
+              </button>
+            )}
             <button
               onClick={handleDelete}
-              className="col-span-3 sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/20 transition text-sm font-medium whitespace-nowrap"
+              className={`${isVideo ? 'col-span-2' : 'col-span-3'} sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/20 transition text-sm font-medium whitespace-nowrap`}
             >
               <TrashIcon className="w-4 h-4 flex-shrink-0" />
               删除任务

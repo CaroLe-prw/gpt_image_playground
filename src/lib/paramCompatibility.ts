@@ -8,7 +8,9 @@ export const MAX_FAL_OUTPUT_IMAGES = 4
 export const MAX_OPENAI_OUTPUT_IMAGES = 10
 
 export function getOutputImageLimitForSettings(settings: AppSettings) {
-  return getActiveApiProfile(settings).provider === 'fal' ? MAX_FAL_OUTPUT_IMAGES : MAX_OPENAI_OUTPUT_IMAGES
+  const provider = getActiveApiProfile(settings).provider
+  if (provider === 'grok-video') return 1
+  return provider === 'fal' ? MAX_FAL_OUTPUT_IMAGES : MAX_OPENAI_OUTPUT_IMAGES
 }
 
 export function normalizeParamsForSettings(
@@ -44,6 +46,18 @@ export function normalizeParamsForSettings(
   if (activeProfile.provider === 'grok') {
     if (nextParams.quality !== 'auto' && nextParams.quality !== 'low' && nextParams.quality !== 'medium') nextParams.quality = 'medium'
     nextParams.moderation = DEFAULT_PARAMS.moderation
+  }
+
+  if (activeProfile.provider === 'grok-video') {
+    const duration = Math.trunc(nextParams.videoDuration ?? 8)
+    nextParams.n = 1
+    nextParams.quality = DEFAULT_PARAMS.quality
+    nextParams.moderation = DEFAULT_PARAMS.moderation
+    nextParams.output_compression = DEFAULT_PARAMS.output_compression
+    nextParams.transparent_output = false
+    nextParams.videoDuration = Math.min(15, Math.max(1, Number.isFinite(duration) ? duration : 8))
+    nextParams.videoResolution = nextParams.videoResolution ?? '720p'
+    nextParams.videoGenerateAudio = nextParams.videoGenerateAudio ?? true
   }
 
   if ((nextParams.quality === 'xhigh' || nextParams.quality === 'max') && !isGptImage25Model(getImageGenerationModel(activeProfile))) {

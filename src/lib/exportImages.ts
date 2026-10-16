@@ -7,8 +7,8 @@ import { fromImageRecord, getStoredImageRecord, getStoredThumbnailRecord } from 
 import { cacheThumbnail } from './imageCache'
 import { isTauri } from './platform'
 
-// 经 dataUrl 导出时 dataUrlToBytes 只从 data:image/<单词>;base64 推出扩展名，其他情况一律为 png 且解码方式不同。
-// 客户端文件与网页版 Blob 只对这种 mime 直接使用二进制，其余回退到 dataUrl，保证 ZIP 内容与经 dataUrl 导出时完全一致
+// 经 dataUrl 导出时 dataUrlToBytes 会从 data:image 或 data:video 推出扩展名。
+// 客户端文件与网页版 Blob 只对图片 mime 直接使用二进制，其余回退到 dataUrl，保证 ZIP 内容与经 dataUrl 导出时完全一致
 const SIMPLE_IMAGE_MIME = /^image\/(\w+)$/
 
 /** 估算每张图片在备份中的大小，只取文件大小、不读出图片；缺少当前版本缩略图时不计缩略图 */

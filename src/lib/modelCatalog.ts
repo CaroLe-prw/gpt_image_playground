@@ -1,11 +1,12 @@
 import type { ApiProfile, AppSettings } from '../types'
-import { DEFAULT_GROK_BASE_URL, isOpenAICompatibleProvider } from './apiProfiles'
+import { DEFAULT_GROK_BASE_URL, DEFAULT_GROK_VIDEO_BASE_URL, isOpenAICompatibleProvider } from './apiProfiles'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { createGeminiAuthHeaders, getGeminiBaseUrl } from './geminiImageApi'
 import { createRequestTimeoutError, getApiErrorMessage } from './imageApiShared'
 import { apiFetch } from './platform'
 
 const IMAGE_MODEL_PATTERN = /image|imagen|nano-banana|dall[-_]?e|flux|seedream|stable[-_]?diffusion|sdxl/i
+const VIDEO_MODEL_PATTERN = /video|veo|kling|sora/i
 
 function getModelList(payload: unknown): unknown[] {
   if (Array.isArray(payload)) return payload
@@ -35,14 +36,16 @@ function readModelId(item: unknown, gemini: boolean) {
 export async function fetchProfileModels(settings: AppSettings, profile: ApiProfile): Promise<string[]> {
   const gemini = profile.provider === 'gemini'
   const grok = profile.provider === 'grok'
-  if (!gemini && !grok && !isOpenAICompatibleProvider(settings, profile.provider)) {
+  const grokVideo = profile.provider === 'grok-video'
+  if (!gemini && !grok && !grokVideo && !isOpenAICompatibleProvider(settings, profile.provider)) {
     throw new Error('当前服务商不支持获取模型列表')
   }
 
   const proxyConfig = readClientDevProxyConfig()
+  const defaultBaseUrl = grokVideo ? DEFAULT_GROK_VIDEO_BASE_URL : DEFAULT_GROK_BASE_URL
   const url = gemini
     ? `${getGeminiBaseUrl(profile)}/models`
-    : buildApiUrl(grok ? profile.baseUrl.trim() || DEFAULT_GROK_BASE_URL : profile.baseUrl, 'models', proxyConfig, shouldUseApiProxy(profile.apiProxy, proxyConfig))
+    : buildApiUrl(grok || grokVideo ? profile.baseUrl.trim() || defaultBaseUrl : profile.baseUrl, 'models', proxyConfig, shouldUseApiProxy(profile.apiProxy, proxyConfig))
   const headers: Record<string, string> = gemini
     ? createGeminiAuthHeaders(profile)
     : { Authorization: `Bearer ${profile.apiKey}` }
@@ -62,9 +65,10 @@ export async function fetchProfileModels(settings: AppSettings, profile: ApiProf
       .map((item) => readModelId(item, gemini))
       .filter(Boolean)))
     if (!ids.length) throw new Error('接口没有返回可用模型')
-    if (gemini || profile.apiMode === 'images') {
-      const imageModelIds = ids.filter((id) => IMAGE_MODEL_PATTERN.test(id))
-      return imageModelIds.length ? imageModelIds : ids
+    if (gemini || grok || grokVideo || profile.apiMode === 'images') {
+      const modelPattern = grokVideo ? VIDEO_MODEL_PATTERN : IMAGE_MODEL_PATTERN
+      const filteredIds = ids.filter((id) => modelPattern.test(id))
+      return filteredIds.length ? filteredIds : ids
     }
     return ids
   } finally {

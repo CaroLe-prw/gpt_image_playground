@@ -15,7 +15,7 @@ export const ZIP_DOWNLOAD_ROUTE_VALUES = [
 ] as const
 export type ZipDownloadRoute = typeof ZIP_DOWNLOAD_ROUTE_VALUES[number]
 export const DEFAULT_ZIP_DOWNLOAD_ROUTES: ZipDownloadRoute[] = ['task-selection', 'favorite-collection-selection']
-export type BuiltInApiProvider = 'openai' | 'gemini' | 'grok' | 'sb2api-async' | 'fal'
+export type BuiltInApiProvider = 'openai' | 'gemini' | 'grok' | 'grok-video' | 'sb2api-async' | 'fal'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
@@ -201,6 +201,9 @@ export interface TaskParams {
   moderation: 'auto' | 'low'
   n: number
   transparent_output: boolean
+  videoDuration?: number
+  videoResolution?: '480p' | '720p' | '1080p'
+  videoGenerateAudio?: boolean
 }
 
 export const DEFAULT_PARAMS: TaskParams = {
@@ -251,6 +254,8 @@ export interface TaskRecord {
   id: string
   prompt: string
   params: TaskParams
+  /** 输出媒体类型；缺省为图片 */
+  mediaType?: 'image' | 'video'
   /** 生成时使用的 Provider 类型 */
   apiProvider?: ApiProvider
   /** 生成时使用的 API 配置 ID */

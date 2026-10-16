@@ -15,6 +15,8 @@ import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_GROK_BASE_URL,
   DEFAULT_GROK_MODEL,
+  DEFAULT_GROK_VIDEO_BASE_URL,
+  DEFAULT_GROK_VIDEO_MODEL,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_RESPONSES_MODEL,
   DEFAULT_SETTINGS,
@@ -251,22 +253,23 @@ export default function SettingsModal() {
   const activePresetDescription = getPresetProfileDescription(activeProfile.id)
   const activeProfileLocked = isPresetProfileLocked(activeProfile.id)
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
-  const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal' || activeProfile.provider === 'gemini' || activeProfile.provider === 'grok'
-  const modelFetchSupported = activeProviderIsOpenAICompatible || activeProfile.provider === 'gemini' || activeProfile.provider === 'grok'
+  const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal' || activeProfile.provider === 'gemini' || activeProfile.provider === 'grok' || activeProfile.provider === 'grok-video'
+  const modelFetchSupported = activeProviderIsOpenAICompatible || activeProfile.provider === 'gemini' || activeProfile.provider === 'grok' || activeProfile.provider === 'grok-video'
   const activeProviderSupportsB64 = activeProviderIsOpenAICompatible || activeProfile.provider === 'grok'
   const activeCustomProvider = getCustomProviderDefinition(draft, activeProfile.provider)
-  const activeCustomProviderSupportsNativeTransparentBackground = activeProfile.provider !== 'gemini' && activeProfile.provider !== 'grok' && (!activeCustomProvider || customProviderSupportsNativeTransparentBackground(activeCustomProvider))
+  const activeCustomProviderSupportsNativeTransparentBackground = activeProfile.provider !== 'gemini' && activeProfile.provider !== 'grok' && activeProfile.provider !== 'grok-video' && (!activeCustomProvider || customProviderSupportsNativeTransparentBackground(activeCustomProvider))
   const activeProfileApiProxyEligible = isProfileApiProxyEligible(draft, activeProfile)
   const activeCustomProviderAsync = isAsyncCustomProvider(activeCustomProvider)
   const apiProxyChecked = activeProfileApiProxyEligible && (apiProxyLocked || activeProfile.apiProxy)
   const apiProxyEnabled = apiProxyAvailable && activeProfileApiProxyEligible && apiProxyChecked
-  const defaultProviderOrder = ['openai', 'gemini', 'grok', ...draft.customProviders.map(p => p.id)]
+  const defaultProviderOrder = ['openai', 'gemini', 'grok', 'grok-video', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
   const unorderedProviderOptions = [
-    { label: 'OpenAI 兼容接口', value: 'openai', draggable: true },
+    { label: 'OpenAI', value: 'openai', draggable: true },
     { label: 'Gemini', value: 'gemini', draggable: true },
     { label: 'Grok', value: 'grok', draggable: true },
+    { label: 'Grok 视频', value: 'grok-video', draggable: true },
     ...draft.customProviders.map((provider) => {
       const actions = [
         ...(!presetConfigOnly && !isPresetProviderLocked(provider.id) ? [{ label: '编辑', onClick: () => openEditCustomProvider(provider) }] : []),
@@ -463,14 +466,18 @@ export default function SettingsModal() {
           ? profile.baseUrl.trim().replace(/\/+$/, '') || DEFAULT_GEMINI_BASE_URL
           : profile.provider === 'grok'
             ? profile.baseUrl.trim().replace(/\/+$/, '') || DEFAULT_GROK_BASE_URL
-            : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || emptyBaseUrlFallback)
+            : profile.provider === 'grok-video'
+              ? profile.baseUrl.trim().replace(/\/+$/, '') || DEFAULT_GROK_VIDEO_BASE_URL
+              : shouldKeepEmptyBaseUrl ? '' : normalizeBaseUrl(profile.baseUrl.trim() || emptyBaseUrlFallback)
       const defaultModel = profile.provider === 'fal'
         ? DEFAULT_FAL_MODEL
         : profile.provider === 'gemini'
           ? DEFAULT_GEMINI_MODEL
           : profile.provider === 'grok'
             ? DEFAULT_GROK_MODEL
-            : getDefaultModelForMode(profile.apiMode)
+            : profile.provider === 'grok-video'
+              ? DEFAULT_GROK_VIDEO_MODEL
+              : getDefaultModelForMode(profile.apiMode)
       return {
         ...profile,
         name: profile.name.trim() || (profile.id === defaultProfileId ? '默认' : '新配置'),
@@ -1543,7 +1550,7 @@ export default function SettingsModal() {
                     onBlur={(e) => commitActiveProfilePatch({ baseUrl: e.target.value })}
                     type="text"
                     disabled={apiProxyEnabled || activeProfileLocked}
-                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : activeProfile.provider === 'gemini' ? DEFAULT_GEMINI_BASE_URL : activeProfile.provider === 'grok' ? DEFAULT_GROK_BASE_URL : DEFAULT_SETTINGS.baseUrl}
+                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : activeProfile.provider === 'gemini' ? DEFAULT_GEMINI_BASE_URL : activeProfile.provider === 'grok' ? DEFAULT_GROK_BASE_URL : activeProfile.provider === 'grok-video' ? DEFAULT_GROK_VIDEO_BASE_URL : DEFAULT_SETTINGS.baseUrl}
                     className={`w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   />
                   <div data-selectable-text className="mt-1.5 min-h-[22px] flex items-center text-xs text-gray-500 dark:text-gray-500">
@@ -1555,6 +1562,8 @@ export default function SettingsModal() {
                       <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_GEMINI_BASE_URL}</code>，并拼接 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/models/...:generateContent</code> 调用 Gemini 原生接口。</span>
                     ) : activeProfile.provider === 'grok' ? (
                       <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_GROK_BASE_URL}</code>，并拼接 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/images/generations</code> 或 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/images/edits</code> 调用 Grok Imagine。</span>
+                    ) : activeProfile.provider === 'grok-video' ? (
+                      <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_GROK_VIDEO_BASE_URL}</code>，并拼接 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/videos/generations</code> 调用 Grok 视频接口。</span>
                     ) : (
                       <span>末尾带 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/</code> 时直接使用该地址拼接接口，不补 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/v1</code> 前缀；支持通过链接参数导入（打开时会先确认）：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code>。</span>
                     )}
@@ -1596,7 +1605,7 @@ export default function SettingsModal() {
                     onChange={(e) => updateActiveProfile({ apiKey: e.target.value })}
                     onBlur={(e) => commitActiveProfilePatch({ apiKey: e.target.value })}
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : activeProfile.provider === 'gemini' ? 'AIza...' : activeProfile.provider === 'grok' ? 'xai-...' : 'sk-...'}
+                    placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : activeProfile.provider === 'gemini' ? 'AIza...' : activeProfile.provider === 'grok' || activeProfile.provider === 'grok-video' ? 'xai-...' : 'sk-...'}
                     className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 pr-10 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
                   />
                   <button
@@ -1685,7 +1694,7 @@ export default function SettingsModal() {
                     onBlur={(e) => commitActiveProfilePatch({ model: e.target.value, selectedModel: undefined })}
                     type="text"
                     disabled={activeProfileLocked}
-                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : activeProfile.provider === 'gemini' ? DEFAULT_GEMINI_MODEL : activeProfile.provider === 'grok' ? DEFAULT_GROK_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
+                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : activeProfile.provider === 'gemini' ? DEFAULT_GEMINI_MODEL : activeProfile.provider === 'grok' ? DEFAULT_GROK_MODEL : activeProfile.provider === 'grok-video' ? DEFAULT_GROK_VIDEO_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
                     className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
                   />
                 ) : (
@@ -1709,6 +1718,8 @@ export default function SettingsModal() {
                     <>使用支持图片输出的 Gemini 模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_GEMINI_MODEL}</code> 或 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">gemini-3-pro-image</code>。</>
                   ) : activeProfile.provider === 'grok' ? (
                     <>使用 Grok Imagine 生图模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_GROK_MODEL}</code>。</>
+                  ) : activeProfile.provider === 'grok-video' ? (
+                    <>使用 Grok 视频生成模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_GROK_VIDEO_MODEL}</code>。</>
                   ) : activeCustomProvider ? (
                     <>当前使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{activeCustomProvider.name}</code>。</>
                   ) : (activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' ? (
@@ -1835,7 +1846,9 @@ export default function SettingsModal() {
                     ? 'Gemini 原生接口没有独立透明背景参数，将使用本地后处理。'
                     : activeProfile.provider === 'grok'
                       ? 'Grok Imagine 没有独立透明背景参数，将使用本地后处理。'
-                      : activeCustomProviderSupportsNativeTransparentBackground
+                      : activeProfile.provider === 'grok-video'
+                        ? '视频任务不使用透明背景参数。'
+                        : activeCustomProviderSupportsNativeTransparentBackground
                         ? `API 原生会请求接口直接生成透明背景，需当前接口支持；本地后处理会生成纯色背景并在${isTauri ? '本地' : '浏览器中'}去除。`
                         : <>当前自定义服务商 Manifest 未映射 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">$params.background</code>，无法使用 API 原生透明背景。</>}
                 </div>

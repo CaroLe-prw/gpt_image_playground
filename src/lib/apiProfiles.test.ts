@@ -6,6 +6,8 @@ import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_GROK_BASE_URL,
   DEFAULT_GROK_MODEL,
+  DEFAULT_GROK_VIDEO_BASE_URL,
+  DEFAULT_GROK_VIDEO_MODEL,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_RESPONSES_MODEL,
   DEFAULT_OPENAI_PROFILE_ID,
@@ -14,6 +16,7 @@ import {
   createDefaultFalProfile,
   createDefaultGeminiProfile,
   createDefaultGrokProfile,
+  createDefaultGrokVideoProfile,
   getApiProviderLabel,
   getActiveApiProfile,
   getCustomProviderDefinition,
@@ -1684,7 +1687,7 @@ describe('custom providers', () => {
       ],
     })
 
-    expect(settings.providerOrder).toEqual(['fal', 'openai', 'gemini', 'grok', 'sb2api-async', 'custom-alpha', 'custom-beta'])
+    expect(settings.providerOrder).toEqual(['fal', 'openai', 'gemini', 'grok', 'grok-video', 'sb2api-async', 'custom-alpha', 'custom-beta'])
   })
 
   it('keeps active custom providers in Images API mode when legacy apiMode is responses', () => {
@@ -1714,6 +1717,7 @@ describe('custom providers', () => {
     const falProfile = switchApiProfileProvider(openaiProfile, 'fal')
     const geminiProfile = switchApiProfileProvider(openaiProfile, 'gemini')
     const grokProfile = switchApiProfileProvider(openaiProfile, 'grok')
+    const grokVideoProfile = switchApiProfileProvider(openaiProfile, 'grok-video')
     const customProfile = switchApiProfileProvider(openaiProfile, provider.id, provider)
 
     expect(falProfile).toMatchObject({ provider: 'fal', apiMode: 'images', streamImages: false, transparentBackgroundMethod: 'api' })
@@ -1729,6 +1733,14 @@ describe('custom providers', () => {
       provider: 'grok',
       baseUrl: DEFAULT_GROK_BASE_URL,
       model: DEFAULT_GROK_MODEL,
+      apiMode: 'images',
+      streamImages: false,
+      transparentBackgroundMethod: 'local',
+    })
+    expect(grokVideoProfile).toMatchObject({
+      provider: 'grok-video',
+      baseUrl: DEFAULT_GROK_VIDEO_BASE_URL,
+      model: DEFAULT_GROK_VIDEO_MODEL,
       apiMode: 'images',
       streamImages: false,
       transparentBackgroundMethod: 'local',
@@ -1761,6 +1773,33 @@ describe('custom providers', () => {
       transparentBackgroundMethod: 'local',
     })
     expect(getApiProviderLabel(settings, 'grok')).toBe('Grok')
+  })
+
+  it('normalizes Grok video profiles with native defaults', () => {
+    const settings = normalizeSettings({
+      profiles: [createDefaultGrokVideoProfile({
+        id: 'grok-video-test',
+        baseUrl: '',
+        model: '',
+        apiMode: 'responses',
+        streamImages: true,
+        codexCli: true,
+        apiProxy: true,
+        transparentBackgroundMethod: 'api',
+      })],
+    })
+
+    expect(settings.profiles[0]).toMatchObject({
+      provider: 'grok-video',
+      baseUrl: DEFAULT_GROK_VIDEO_BASE_URL,
+      model: DEFAULT_GROK_VIDEO_MODEL,
+      apiMode: 'images',
+      streamImages: false,
+      codexCli: false,
+      apiProxy: false,
+      transparentBackgroundMethod: 'local',
+    })
+    expect(getApiProviderLabel(settings, 'grok-video')).toBe('Grok 视频')
   })
 
   it('keeps an explicitly empty fal.ai URL', () => {

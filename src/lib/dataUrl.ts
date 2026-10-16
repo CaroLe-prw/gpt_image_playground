@@ -4,6 +4,7 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   jpeg: 'image/jpeg',
   webp: 'image/webp',
   gif: 'image/gif',
+  mp4: 'video/mp4',
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {
@@ -22,7 +23,7 @@ export function base64ToBytes(base64: string): Uint8Array {
 }
 
 export function dataUrlToBytes(dataUrl: string): { ext: string; bytes: Uint8Array } {
-  const match = dataUrl.match(/^data:image\/(\w+);base64,/)
+  const match = dataUrl.match(/^data:(?:image|video)\/(\w+);base64,/)
   const ext = match?.[1] ?? 'png'
   return { ext, bytes: base64ToBytes(dataUrl.replace(/^data:[^;]+;base64,/, '')) }
 }

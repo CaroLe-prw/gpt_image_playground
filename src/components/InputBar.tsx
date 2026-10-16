@@ -511,14 +511,15 @@ export default function InputBar() {
   const isFalProvider = activeProvider === 'fal'
   const isGeminiProvider = activeProvider === 'gemini'
   const isGrokProvider = activeProvider === 'grok'
+  const isGrokVideoProvider = activeProvider === 'grok-video'
   const agentAutoImageCount = appMode === 'agent'
-  const moderationDisabled = isFalProvider || isGeminiProvider || isGrokProvider
-  const transparentOutputAvailable = appMode === 'gallery'
+  const moderationDisabled = isFalProvider || isGeminiProvider || isGrokProvider || isGrokVideoProvider
+  const transparentOutputAvailable = appMode === 'gallery' && !isGrokVideoProvider
   const showTransparentOutputControl = transparentOutputAvailable && (params.output_format === 'png' || params.output_format === 'webp')
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
-  const compressionDisabled = params.output_format === 'png' || isFalProvider
+  const compressionDisabled = params.output_format === 'png' || isFalProvider || isGrokVideoProvider
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
-  const inputImageLimit = isGrokProvider ? 5 : MAX_INPUT_IMAGES
+  const inputImageLimit = isGrokVideoProvider ? 1 : isGrokProvider ? 5 : MAX_INPUT_IMAGES
   const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
@@ -531,7 +532,9 @@ export default function InputBar() {
       ? `Gemini 最多并发生成 ${outputImageLimit} 张`
       : isGrokProvider
         ? `Grok 最大请求数量为 ${outputImageLimit}`
-        : `OpenAI 最大请求数量为 ${outputImageLimit}`
+        : isGrokVideoProvider
+          ? 'Grok 视频每次生成 1 个'
+          : `OpenAI 最大请求数量为 ${outputImageLimit}`
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
     : (activeProfile.codexCli ? normalizeCodexCliImageSize(params.size) : normalizeImageSize(params.size)) || DEFAULT_PARAMS.size
@@ -556,7 +559,7 @@ export default function InputBar() {
   }, [transparentOutputHint.hide])
   const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
   const moderationHint = useHintTooltip({ enabled: () => moderationDisabled })
-  const sizeHint = useHintTooltip({ enabled: () => isFalTextToImage || activeProfile.codexCli || isGeminiProvider || isGrokProvider })
+  const sizeHint = useHintTooltip({ enabled: () => isFalTextToImage || activeProfile.codexCli || isGeminiProvider || isGrokProvider || isGrokVideoProvider })
   const qualityHint = useHintTooltip({ enabled: () => activeProfile.codexCli || isFalProvider || isGeminiProvider })
   const nLimitHint = useHintTooltip({ autoHideMs: 2000 })
   const streamConcurrentHint = useHintTooltip({ enabled: () => streamConcurrentByN })
@@ -1511,7 +1514,7 @@ export default function InputBar() {
             <div className="h-full w-full overflow-hidden">
               <img
                 src={displaySrc}
-                className="w-full h-full object-cover hover:opacity-90 transition-opacity pointer-events-none"
+                className="w-full h-full object-contain hover:opacity-90 transition-opacity pointer-events-none"
                 alt=""
               />
             </div>
@@ -1685,6 +1688,7 @@ export default function InputBar() {
       isFalProvider={isFalProvider}
       isGeminiProvider={isGeminiProvider}
       isGrokProvider={isGrokProvider}
+      isGrokVideoProvider={isGrokVideoProvider}
       isFalTextToImage={isFalTextToImage}
       displaySize={displaySize}
       qualityOptions={qualityOptions}

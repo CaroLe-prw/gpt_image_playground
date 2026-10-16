@@ -9,6 +9,14 @@ describe('dataUrl helpers', () => {
     expect(Array.from(result.bytes)).toEqual([1, 2, 3])
   })
 
+  it('converts video data URLs to MP4 bytes with extension', () => {
+    const result = dataUrlToBytes('data:video/mp4;base64,AQID')
+
+    expect(result.ext).toBe('mp4')
+    expect(Array.from(result.bytes)).toEqual([1, 2, 3])
+    expect(bytesToDataUrl(new Uint8Array([1, 2, 3]), 'videos/output.mp4')).toBe('data:video/mp4;base64,AQID')
+  })
+
   it('converts bytes to image data URLs from file extension', () => {
     expect(bytesToDataUrl(new Uint8Array([1, 2, 3]), 'images/output.webp')).toBe('data:image/webp;base64,AQID')
   })

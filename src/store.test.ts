@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 import { DEFAULT_PARAMS } from './types'
-import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
+import { createDefaultFalProfile, createDefaultGrokVideoProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
 import type { AgentConversation, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 import { hasActiveDataOperations, hasInterruptibleOperations, trackDataTransfer } from './lib/dataOperations'
@@ -105,6 +105,9 @@ vi.mock('./lib/falAiImageApi', () => ({
     revisedPrompts: [],
   })),
 }))
+vi.mock('./lib/grokVideoApi', () => ({
+  getGrokVideoResult: vi.fn(),
+}))
 vi.mock('./lib/transparentImage', () => ({
   GREEN_KEY_COLOR: '#00FF00',
   MAGENTA_KEY_COLOR: '#FF00FF',
@@ -142,8 +145,10 @@ import { clearAgentConversations, clearImages, clearTasks, commitTaskDeletion, d
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import { getFalQueuedImageResult } from './lib/falAiImageApi'
+import { getGrokVideoResult } from './lib/grokVideoApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { clearData, clearFailedTasks, deleteFavoriteCollection, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, restoreExplicitPresetConfig, retryTask, reuseConfig, stopAgentResponse, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
+import { cacheImage } from './lib/imageCache'
 
 const commitTaskDeletionImplementation = vi.mocked(commitTaskDeletion).getMockImplementation()!
 const deleteDbImageImplementation = vi.mocked(deleteDbImage).getMockImplementation()!
@@ -316,6 +321,188 @@ describe('favorite collection deletion', () => {
       favoriteCollectionIds: [collectionB.id],
     })
     expect((await getAllTasks()).map((item) => item.id)).toEqual([sharedTask.id])
+  })
+})
+
+describe('grok video tasks', () => {
+  beforeEach(async () => {
+    await clearTasks()
+    await clearImages()
+    vi.mocked(callImageApi).mockReset()
+    vi.mocked(getGrokVideoResult).mockReset()
+  })
+
+  it('opens a video for frame selection instead of inserting the MP4 as an image', async () => {
+    const video = task({ apiProvider: 'grok-video', mediaType: 'video', outputImages: ['video-output'] })
+    cacheImage('video-output', 'data:video/mp4;base64,dmlkZW8=')
+    useStore.setState({ tasks: [video], inputImages: [], detailTaskId: null, showToast: vi.fn() })
+
+    await editOutputs(video)
+
+    expect(useStore.getState().inputImages).toEqual([])
+    expect(useStore.getState().detailTaskId).toBe(video.id)
+    expect(callImageApi).not.toHaveBeenCalled()
+  })
+
+  it('stores a captured PNG as a new reference and replaces an older broken video reference', async () => {
+    const video = task({ apiProvider: 'grok-video', mediaType: 'video', outputImages: ['video-output'] })
+    const frame = 'data:image/png;base64,ZnJhbWU='
+    useStore.setState({
+      tasks: [video],
+      inputImages: [imageA, { id: 'video-output', dataUrl: 'data:video/mp4;base64,dmlkZW8=' }],
+      maskDraft: null,
+      showToast: vi.fn(),
+    })
+
+    await editOutputs(video, frame)
+
+    const inputs = useStore.getState().inputImages
+    expect(inputs).toHaveLength(2)
+    expect(inputs[0]).toEqual(imageA)
+    expect(inputs[1].dataUrl).toBe(frame)
+    expect(inputs[1].id).not.toBe('video-output')
+    expect((await getImage(inputs[1].id))?.dataUrl).toBe(frame)
+    expect(useStore.getState().tasks[0].outputImages).toEqual(['video-output'])
+    expect(callImageApi).not.toHaveBeenCalled()
+  })
+
+  it('stores generated video with video media type', async () => {
+    const profile = createDefaultGrokVideoProfile({ id: 'grok-video-test', apiKey: 'grok-key' })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [profile],
+        activeProfileId: profile.id,
+      }),
+      tasks: [],
+      appMode: 'gallery',
+      prompt: 'make a video',
+      inputImages: [],
+      params: {
+        ...DEFAULT_PARAMS,
+        videoDuration: 10,
+        videoResolution: '1080p',
+        videoGenerateAudio: false,
+      },
+      showToast: vi.fn(),
+    })
+    vi.mocked(callImageApi).mockImplementationOnce(async (opts) => {
+      opts.onCustomTaskEnqueued?.({ taskId: 'req-video' })
+      return {
+        images: ['data:video/mp4;base64,dmlkZW8='],
+        actualParams: { n: 1, videoDuration: 6 },
+        actualParamsList: [{ n: 1, videoDuration: 6 }],
+        rawImageUrls: ['https://api.example.com/v1/files/videos/result.mp4'],
+      }
+    })
+
+    await submitTask()
+    await vi.waitFor(() => expect(useStore.getState().tasks[0].status).toBe('done'))
+
+    const task = useStore.getState().tasks[0]
+    expect(task.mediaType).toBe('video')
+    expect(task.outputImages).toHaveLength(1)
+    expect(task.params.videoDuration).toBe(10)
+    expect(task.actualParams?.videoDuration).toBe(6)
+    expect(task.actualParamsByImage?.[task.outputImages[0]].videoDuration).toBe(6)
+    expect((await getImage(task.outputImages[0]))?.dataUrl).toBe('data:video/mp4;base64,dmlkZW8=')
+  })
+
+  it('preserves actual duration and the resolved URL when recovering an existing video request', async () => {
+    const profile = createDefaultGrokVideoProfile({ id: 'grok-video-recovery', apiKey: 'grok-key' })
+    const pending = task({
+      id: 'recover-video',
+      apiProvider: 'grok-video',
+      apiProfileId: profile.id,
+      apiModel: profile.model,
+      mediaType: 'video',
+      status: 'running',
+      finishedAt: null,
+      elapsed: null,
+      params: { ...DEFAULT_PARAMS, videoDuration: 1 },
+      customTaskId: 'req-recovery',
+    })
+    useStore.setState({
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }),
+      tasks: [],
+      agentConversations: [],
+      inputImages: [],
+      showToast: vi.fn(),
+    })
+    await putDbTask(pending)
+    const videoUrl = 'https://api.example.com/v1/files/videos/recovered.mp4'
+    vi.mocked(getGrokVideoResult).mockResolvedValueOnce({
+      images: ['data:video/mp4;base64,dmlkZW8='],
+      actualParams: { n: 1, videoDuration: 6 },
+      actualParamsList: [{ n: 1, videoDuration: 6 }],
+      rawImageUrls: [videoUrl],
+    })
+
+    await initStore()
+    await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('done'))
+
+    const recovered = useStore.getState().tasks[0]
+    expect(getGrokVideoResult).toHaveBeenCalledWith(expect.objectContaining({ id: profile.id }), 'req-recovery')
+    expect(callImageApi).not.toHaveBeenCalled()
+    expect(recovered.params.videoDuration).toBe(1)
+    expect(recovered.actualParams?.videoDuration).toBe(6)
+    expect(recovered.actualParamsByImage?.[recovered.outputImages[0]].videoDuration).toBe(6)
+    expect(recovered.rawImageUrls).toEqual([videoUrl])
+  })
+
+  it('retries only the existing video download using its original profile and preserves generation time', async () => {
+    const profile = createDefaultGrokVideoProfile({ id: 'original-video-profile', apiKey: 'grok-key' })
+    const other = createDefaultOpenAIProfile({ id: 'other-profile', apiKey: 'other-key' })
+    const videoUrl = 'https://api.viapi.cc/v1/videos/req-existing/content'
+    const failed = task({
+      id: 'video-download-failed',
+      apiProvider: 'grok-video',
+      apiProfileId: profile.id,
+      apiModel: profile.model,
+      mediaType: 'video',
+      status: 'error',
+      error: '视频 URL 下载失败：HTTP 401',
+      elapsed: 94000,
+      customTaskId: 'req-existing',
+      rawImageUrls: [videoUrl],
+    })
+    useStore.setState({
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile, other], activeProfileId: other.id }),
+      tasks: [failed],
+    })
+    const result = deferred<Awaited<ReturnType<typeof getGrokVideoResult>>>()
+    vi.mocked(getGrokVideoResult).mockReturnValueOnce(result.promise)
+
+    const retry = retryTask(failed)
+    await retryTask(failed)
+    result.resolve({ images: ['data:video/mp4;base64,dmlkZW8='], actualParamsList: [{ n: 1, videoDuration: 8 }], rawImageUrls: [videoUrl] })
+    await retry
+
+    expect(callImageApi).not.toHaveBeenCalled()
+    expect(getGrokVideoResult).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: profile.id, apiKey: 'grok-key' }), 'req-existing')
+    expect(useStore.getState().tasks).toHaveLength(1)
+    expect(useStore.getState().tasks[0]).toMatchObject({
+      id: failed.id,
+      createdAt: failed.createdAt,
+      elapsed: 94000,
+      status: 'done',
+      customRecoverable: false,
+      actualParams: { videoDuration: 8 },
+    })
+  })
+
+  it('does not submit a new generation when the original video profile is missing', async () => {
+    const failed = task({
+      apiProvider: 'grok-video', apiProfileId: 'removed-profile', status: 'error',
+      customTaskId: 'req-existing', rawImageUrls: ['https://api.viapi.cc/v1/videos/req-existing/content'],
+    })
+    useStore.setState({ settings: DEFAULT_SETTINGS, tasks: [failed], showToast: vi.fn() })
+
+    await retryTask(failed)
+
+    expect(callImageApi).not.toHaveBeenCalled()
+    expect(getGrokVideoResult).not.toHaveBeenCalled()
+    expect(useStore.getState().showToast).toHaveBeenCalledWith(expect.stringContaining('原任务'), 'error')
   })
 })
 

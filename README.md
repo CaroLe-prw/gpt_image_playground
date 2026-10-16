@@ -150,9 +150,10 @@
 ### 🔌 多配置与供应商增强
 - **多配置管理**：保存多个 API 配置（供应商、API Key、模型等）并快速切换；可一键复制当前配置到列表底部，配置和供应商列表均可拖拽排序。
 - **多模型切换**：模型 ID 可用逗号分隔填写多个（如 `gpt-image-2.5-sunburst, gpt-image-2`），在首页切换，按配置分别记住；预置配置、URL 传参与导入导出均支持此写法。
-- **多供应商接入**：内置 OpenAI 兼容接口（`Images API` / `Responses API`）、Gemini 原生接口（`generateContent`）、Grok Imagine（`Images API`）、sub2api（异步）、fal.ai（队列），并可通过 JSON 导入自定义 HTTP 供应商（同步/异步任务）。
+- **多供应商接入**：内置 OpenAI 兼容接口（`Images API` / `Responses API`）、Gemini 原生接口（`generateContent`）、Grok Imagine（`Images API`）、Grok 视频（`Videos API`）、sub2api（异步）、fal.ai（队列），并可通过 JSON 导入自定义 HTTP 供应商（同步/异步任务）。
 - **Gemini 原生生图**：默认使用 `gemini-3.1-flash-image`，支持文本生图、参考图编辑和并发多图；尺寸映射为模型支持的宽高比与分辨率档位，JPEG/WebP 在本地转换，独立遮罩参数暂不支持。
 - **Grok Imagine 生图**：默认使用 `grok-imagine-image-2.0`，支持文本生图和最多 5 张参考图编辑；尺寸映射为支持的宽高比与 1K、2K 分辨率，支持 URL/Base64 响应及本地格式转换，独立遮罩参数暂不支持。
+- **Grok 视频生成**：默认使用 `grok-imagine-video-1.5`，支持文生视频和单张参考图生视频，可设置 1–15 秒时长、480p/720p/1080p 分辨率和音频开关；异步任务可断线恢复，完成后下载为 MP4。
 - **Agent 模式独立 API 配置**：Agent 可使用原生（Responses API）或混合（Responses API + Images API）的独立配置，适配不支持 `image_generation` 工具的供应商或模型。
 - **API 代理**：OpenAI 兼容接口与 fal.ai 均可配置自定义代理；OpenAI 兼容接口还可走同源 `/api-proxy/`，由 Docker 或本地开发服务器转发，绕开浏览器 CORS 限制。
 - **Codex CLI 兼容模式**：上游为 Codex CLI 时，按其实际支持的参数发送请求，并把多图生成拆成并发单图。
@@ -495,7 +496,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 顶层字段：
 
 - **`profiles`**（数组）：预置的 API 配置列表，每项对应用户配置列表中的一个配置。
-- **`customProviders`**（可选数组）：自定义供应商定义，见下文 [自定义供应商](#custom-provider-config)。只使用内置供应商（OpenAI 兼容、Gemini、Grok、sub2api（异步）、fal.ai）时可省略。
+- **`customProviders`**（可选数组）：自定义供应商定义，见下文 [自定义供应商](#custom-provider-config)。只使用内置供应商（OpenAI 兼容、Gemini、Grok、Grok 视频、sub2api（异步）、fal.ai）时可省略。
 - **`agent`**（可选对象）：Agent 的独立 API 模式及文本、图像配置选择，见下方示例。
 
 `profiles` 中每项的字段：
@@ -505,7 +506,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 | `id` | 定向更新时填写 | 配置标识，见表下说明。 |
 | `name` | 是 | 配置名称。 |
 | `description` | 否 | 配置说明，支持 Markdown，显示在“当前配置”下方的说明卡片中。 |
-| `provider` | 是 | `"openai"`（OpenAI 兼容）、`"gemini"`（Gemini 原生）、`"grok"`（Grok Imagine）、`"sb2api-async"`（sub2api 异步）、`"fal"`（fal.ai），或 `customProviders` 中的供应商 ID。 |
+| `provider` | 是 | `"openai"`（OpenAI 兼容）、`"gemini"`（Gemini 原生）、`"grok"`（Grok Imagine）、`"grok-video"`（Grok 视频）、`"sb2api-async"`（sub2api 异步）、`"fal"`（fal.ai），或 `customProviders` 中的供应商 ID。 |
 | `baseUrl` | 是 | API 基础地址，末尾 `/` 的规则见表下说明；fal.ai 可留空。 |
 | `apiKey` | 否 | API Key。建议省略，由用户自行填写。 |
 | `model` | 是 | 模型 ID。多个模型以逗号分隔，默认使用第一个，用户可在首页切换。 |
@@ -520,7 +521,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 
 - **`id`**：之后的链接（查询参数 `profileId`、`settings` 链接）或预置 JSON 携带相同 ID 时，直接更新该配置而非新建。应用内普通分享链接会省略此字段。
 - **`baseUrl`**：OpenAI 兼容、Grok 和自定义供应商未以 `/` 结尾时按 OpenAI 规则补齐 `/v1`，以 `/` 结尾时直接基于该地址请求；Gemini 未配置默认 API URL 时使用 `https://generativelanguage.googleapis.com/v1beta`，配置后优先使用该地址，并直接拼接 `/models/{model}:generateContent`；Grok 官方默认地址为 `https://api.x.ai/v1`。
-- **`transparentBackgroundMethod` 默认值**：OpenAI 兼容和 fal.ai 为 `"api"`，Gemini 和 Grok 固定为 `"local"`；自定义供应商的生成和编辑请求都映射了 `$params.background` 时为 `"api"`，否则为 `"local"`。
+- **`transparentBackgroundMethod` 默认值**：OpenAI 兼容和 fal.ai 为 `"api"`，Gemini 和 Grok 固定为 `"local"`，Grok 视频不使用该参数；自定义供应商的生成和编辑请求都映射了 `$params.background` 时为 `"api"`，否则为 `"local"`。
 
 ### 示例：仅 OpenAI 兼容
 
@@ -539,7 +540,7 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
 }
 ```
 
-### 示例：OpenAI 兼容 + Gemini + Grok + sub2api + fal.ai 多配置
+### 示例：OpenAI 兼容 + Gemini + Grok + Grok 视频 + sub2api + fal.ai 多配置
 
 ```json
 {
@@ -572,6 +573,13 @@ VITE_DEFAULT_API_URL=https://你的域名?settings=%7B%22profiles%22%3A%5B...%5D
       "provider": "grok",
       "baseUrl": "https://api.x.ai/v1",
       "model": "grok-imagine-image-2.0"
+    },
+    {
+      "id": "grok-video-profile",
+      "name": "Grok 视频",
+      "provider": "grok-video",
+      "baseUrl": "https://api.x.ai/v1",
+      "model": "grok-imagine-video-1.5"
     },
     {
       "id": "fal-profile",
